@@ -1,0 +1,24 @@
+# Basic settings adopted from https://github.com/GokuMohandas/Made-With-ML
+# Black formatting
+[tool.black]
+line-length = 120
+exclude = '''
+/(
+    venv
+  | data
+)/
+'''
+
+# iSort
+[tool.isort]
+profile = "black"
+line_length = 79
+multi_line_output = 3
+include_trailing_comma = true
+virtual_env = "venv"
+skip = ["venv" , "data", ".gitignore"]
+
+[tool.flake8]
+exclude = ["venv", "data"]
+ignore = ["E501"]
+# E501: Line too long
