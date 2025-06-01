@@ -179,6 +179,12 @@ cython_debug/
 ## ================================================================================
 # Data
 data/
+evaluation/
+mlruns/
+model/
+.vscode/
+scratch/
+
 
 # venv
 venv/
@@ -187,3 +193,9 @@ venv/
 .ipynb_checkpoints
 profile_default/
 ipython_config.py
+
+# File types
+*.png
+*.parquet
+*.npy
+*.log

@@ -9,7 +9,7 @@ repos:
     -   id: check-yaml
     -   id: check-added-large-files
         args: ['--maxkb=1000']
-        exclude: "notebooks|data|venv"
+        exclude: "notebooks|data|venv|scratch"
 -   repo: local
     hooks:
     -   id: clean
