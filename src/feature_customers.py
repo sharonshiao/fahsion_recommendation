@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder
+from tqdm import tqdm
 
 from src.config import (
     DEFAULT_CUSTOMER_DYNAMIC_FEATURES_CONFIG,
@@ -38,7 +39,7 @@ def get_path_to_customers_features(feature_type: str, subsample: float, seed: in
 # Customer features
 # =====================================================================================================================
 @dataclass
-class CustomerFeaturePipelineConfig:
+class CustomerStaticFeaturePipelineConfig:
     """Configuration for customer feature pipeline processing."""
 
     config_processor: Dict[str, Any] = field(
@@ -83,7 +84,7 @@ class CustomerFeaturePipelineConfig:
 
 
 @dataclass
-class CustomerFeatureResult:
+class CustomerStaticFeatureResult:
     """Results from customer feature processing."""
 
     data: pd.DataFrame  # Processed customer dataframe
@@ -188,7 +189,7 @@ class CustomerStaticFeatureProcessor:
 
         # Collect feature names
         self._collect_feature_names(customers)
-        results = CustomerFeatureResult(
+        results = CustomerStaticFeatureResult(
             data=customers,
             feature_names={
                 "numerical_features": self.numerical_features,
@@ -229,6 +230,8 @@ class CustomerStaticFeatureProcessor:
         customers["age_bin"] = customers["age_bin"].astype(str)
 
         # Optionally keep numeric age
+        # Fill NA using median
+        customers["age"] = customers["age"].fillna(customers["age"].median())
         if not self.keep_numeric_age:
             customers.drop("age", axis=1, inplace=True)
 
@@ -266,7 +269,7 @@ class CustomerStaticFeatureProcessor:
         return ["customer_id"]
 
 
-class CustomerFeaturePipeline:
+class CustomerStaticFeaturePipeline:
     """End-to-end pipeline for processing customer features."""
 
     def __init__(self, config=None):
@@ -321,8 +324,10 @@ class CustomerDynamicFeaturePipelineConfig:
     config_processor: Dict[str, Any] = field(
         default_factory=lambda: {
             # Feature configuration
-            "start_week_num": 76,
-            "end_week_num": 102,
+            "history_start_week_num": 76,
+            "history_end_week_num": 104,
+            "start_week_num": 95,
+            "end_week_num": 104,
             "k_items": 5,
         }
     )
@@ -398,8 +403,10 @@ class CustomerDynamicFeatureProcessor:
 
     def __init__(self, config=None):
         self.config = config or {}
-        self.start_week_num = self.config.get("start_week_num", 76)
-        self.end_week_num = self.config.get("end_week_num", 102)
+        self.history_start_week_num = self.config.get("history_start_week_num", 52)
+        self.history_end_week_num = self.config.get("history_end_week_num", 104)
+        self.start_week_num = self.config.get("start_week_num", 96)
+        self.end_week_num = self.config.get("end_week_num", 104)
         self.k_items = self.config.get("k_items", 5)
         self.id_columns = ["customer_id", "week_num"]
         self.numerical_features = ["customer_avg_price"]
@@ -419,19 +426,33 @@ class CustomerDynamicFeatureProcessor:
         """
         logger.info("Processing customer dynamic features")
 
-        # Filter transactions to only include weeks between start_week_num and end_week_num
+        # Filter transactions to only include weeks between history_start_week_num and history_end_week_num
+        logger.debug(
+            f"Filtering transactions to only include weeks between {self.history_start_week_num} and {self.history_end_week_num}"
+        )
         transactions = raw_transactions[
-            (raw_transactions["week_num"] >= self.start_week_num) & (raw_transactions["week_num"] <= self.end_week_num)
+            (raw_transactions["week_num"] >= self.history_start_week_num)
+            & (raw_transactions["week_num"] <= self.history_end_week_num)
         ]
+        logger.debug(f"Transactions after filtering: {transactions.shape}")
+        logger.debug(f"Min week: {transactions.week_num.min()}")
+        logger.debug(f"Max week: {transactions.week_num.max()}")
 
-        # Get last k items by week
-        last_k_items = self._get_last_k_items_by_week(transactions, self.k_items)
+        # Get last k items by week between start_week_num and end_week_num
+        last_k_items = self._get_last_k_items_by_week(
+            transactions, self.k_items, self.start_week_num, self.end_week_num
+        )
 
         # Calculate average embeddings
         customer_week_avg_embeddings = self._calculate_average_embeddings(last_k_items, article_embeddings)
 
         # Generate cross join of all possible customer-week pairs
-        cross_join = self._generate_customer_week_cross_join(customer_week_avg_embeddings)
+        customer_ids = transactions.query(
+            "week_num >= @self.start_week_num and week_num <= @self.end_week_num"
+        ).customer_id.unique()
+        logger.debug(f"Customer IDs: {len(customer_ids)}")
+        logger.debug(f"Customer IDs: {customer_ids}")
+        cross_join = self._generate_customer_week_cross_join(customer_ids, self.start_week_num, self.end_week_num)
 
         # Join with average embeddings
         cross_join = cross_join.merge(customer_week_avg_embeddings, on=["customer_id", "week_num"], how="left")
@@ -446,30 +467,47 @@ class CustomerDynamicFeatureProcessor:
             feature_names=self._get_feature_names_dict(),
         )
 
-    def _get_last_k_items_by_week(self, transactions_df: pd.DataFrame, k_items: int) -> pd.DataFrame:
-        """Get the last k items purchased by each customer in each week.
+    @staticmethod
+    def _get_last_k_items_by_week(
+        transactions_df: pd.DataFrame, k_items: int, start_week_num: int, end_week_num: int
+    ) -> pd.DataFrame:
+        """Get the last k items purchased by each customer up to and including each week.
 
         Args:
             transactions_df: DataFrame containing transaction data
+            k_items: Number of most recent items to retrieve
+            start_week_num: Start week number
+            end_week_num: End week number
 
         Returns:
             DataFrame with last k items for each customer-week pair
         """
-        logger.info(f"Getting last {k_items} items by week")
-        # Sort by date (most recent first) within each customer and week
-        # Also sort by article_id to maintain reproducibility
-        sorted_transactions = transactions_df.sort_values(
-            ["customer_id", "week_num", "t_dat", "article_id"], ascending=[True, False, False, True]
-        )
+        logger.info(f"Getting last {k_items} items up to each week")
 
-        # Group by customer and week, and get the last k items
-        last_k_items = (
-            sorted_transactions.groupby(["customer_id", "week_num"])
-            .agg(
-                {"article_id": lambda x: list(x)[:k_items], "price": "mean"}
-            )  # Get last k items (since we sorted in descending order)
-            .reset_index()
-        )
+        # Sort transactions by customer_id, week_num, and t_dat (most recent first)
+        sorted_df = transactions_df.sort_values(["customer_id", "t_dat", "article_id"], ascending=[True, False, True])
+
+        # Create a list to store results
+        results = []
+
+        for week in tqdm(range(start_week_num, end_week_num + 1)):
+            filtered_df = sorted_df[sorted_df["week_num"] <= week]
+            logger.debug(f"min week: {filtered_df.week_num.min()}")
+            logger.debug(f"max week: {filtered_df.week_num.max()}")
+            logger.debug(f"week: {week}")
+            tmp = (
+                filtered_df.drop_duplicates(subset=["customer_id", "article_id"])
+                # Use head because the dataset is sorted by t_dat in descending order
+                .groupby("customer_id")
+                .head(k_items)
+                .groupby("customer_id")
+                .agg({"article_id": list, "price": "mean"})
+            ).reset_index()
+            tmp["week_num"] = week
+            results.append(tmp)
+
+        # Convert to DataFrame
+        last_k_items = pd.concat(results, axis=0, ignore_index=True)
         logger.debug(f"Last {k_items} items by week has shape: {last_k_items.shape}")
 
         return last_k_items
@@ -529,13 +567,14 @@ class CustomerDynamicFeatureProcessor:
 
         return results_df
 
-    def _generate_customer_week_cross_join(self, customer_week_avg_embeddings: pd.DataFrame) -> pd.DataFrame:
+    def _generate_customer_week_cross_join(
+        self, customer_ids: List[int], start_week_num: int, end_week_num: int
+    ) -> pd.DataFrame:
         """Generate a cross join of all possible customer-week pairs."""
         logger.info("Generating cross join of customer-week pairs")
 
-        # Get unique customer IDs and weeks
-        customer_ids = customer_week_avg_embeddings["customer_id"].unique()
-        weeks = np.arange(self.start_week_num, self.end_week_num + 1)
+        # Get weeks
+        weeks = np.arange(start_week_num, end_week_num + 1)
 
         # Create cross join
         df1 = pd.DataFrame(customer_ids, columns=["customer_id"])
@@ -561,14 +600,18 @@ class CustomerDynamicFeatureProcessor:
         logger.info("Filling missing values")
 
         # Sort by customer_id and week_num for forward fill
-        cross_join = cross_join.sort_values(["customer_id", "week_num"]).reset_index(drop=True)
+        cross_join = cross_join.sort_values(
+            ["customer_id", "week_num"],
+        ).reset_index(drop=True)
 
         # Forward fill missing values within each customer group
         cols_ffill = ["customer_avg_price", "customer_avg_text_embedding", "customer_avg_image_embedding"]
         cross_join[cols_ffill] = cross_join.groupby("customer_id")[cols_ffill].ffill()
 
         # Use weekly mean price to fill missing values
-        cross_join["customer_avg_price"] = cross_join.groupby("week_num")["customer_avg_price"].transform("mean")
+        cross_join["customer_avg_price"] = cross_join.groupby("week_num")["customer_avg_price"].transform(
+            lambda x: x.fillna(x.mean())
+        )
 
         logger.debug(f"Cross join after filling missing values has shape: {cross_join.shape}")
         logger.debug(f"Cross join after filling missing values has columns: {cross_join.columns}")

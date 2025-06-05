@@ -13,7 +13,11 @@ import pandas as pd
 from lightgbm import LGBMRanker
 from mlflow.models import infer_signature
 
-from src.config import DEFAULT_RANKER_PIPELINE_CONFIG
+from src.config import (
+    DEFAULT_RANKER_PIPELINE_CONFIG,
+    EXPERIMENT_NAME,
+    RUN_ID_HYPERPARAMETER_TUNING,
+)
 from src.experiment_tracking import (
     log_config,
     log_feature_importance,
@@ -30,8 +34,32 @@ from src.metrics import (
     mean_average_precision_at_k,
     mean_average_precision_at_k_hierarchical,
 )
+from src.utils.core_utils import (
+    convert_dict_values_to_float,
+    decode_lightgbm_params,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def prepare_features_for_ranker(data: LightGBMDataResult, features: List[str]) -> Tuple[pd.DataFrame, List[str]]:
+    """Prepare features for training/ validation."""
+    logger.info(f"Preparing features for training/ validation")
+
+    # Only include features that are also in df
+    cols_features_available = data.get_feature_names_list()
+    for v in features:
+        if v not in cols_features_available:
+            raise ValueError(f"Feature {v} not found in data")
+
+    # Get categorical features from data's feature names
+    cols_features_categorical = [col for col in features if col in data.feature_names["categorical_features"]]
+
+    logger.info(f"Number of features: {len(features)}")
+    logger.info(f"Number of features categorical: {len(cols_features_categorical)}")
+    logger.info(f"Cols features categorical: {cols_features_categorical}")
+
+    return data.data[features], cols_features_categorical
 
 
 @dataclass
@@ -124,6 +152,35 @@ class RankerConfig:
     def get_default_config(cls) -> "RankerConfig":
         return cls.from_dict(DEFAULT_RANKER_PIPELINE_CONFIG)
 
+    @classmethod
+    def get_config_with_tuned_hyperparameters(cls) -> "RankerConfig":
+        """Get config with tuned hyperparameters."""
+        setup_mlflow(EXPERIMENT_NAME)
+        artifact_uri = mlflow.get_run(RUN_ID_HYPERPARAMETER_TUNING).info.artifact_uri
+        hyperparameters_tuning_config = mlflow.artifacts.load_dict(f"{artifact_uri}/config.json")
+        run_data = mlflow.get_run(RUN_ID_HYPERPARAMETER_TUNING).data
+        params = decode_lightgbm_params(run_data.params)
+
+        # Integrate the tuned hyperparameters into the config
+        return RankerConfig(
+            sample=hyperparameters_tuning_config["sample"],
+            subsample=hyperparameters_tuning_config["subsample"],
+            seed=hyperparameters_tuning_config["seed"],
+            tag="tuned_hyperparameters",
+            experiment_name=hyperparameters_tuning_config["experiment_name"],
+            feature_config=hyperparameters_tuning_config["hyperparameter_config"]["feature_config"],
+            lightgbm_params={
+                "ranker_params": params,
+                "fit_params": {
+                    "early_stopping_rounds": hyperparameters_tuning_config["hyperparameter_config"][
+                        "early_stopping_rounds"
+                    ]
+                },
+                "use_validation_set": True,
+                "save_model": True,
+            },
+        )
+
 
 class Ranker:
     def __init__(self, feature_config: Dict, lightgbm_params: Dict):
@@ -147,27 +204,15 @@ class Ranker:
         """Prepare features for training/ validation."""
         logger.info(f"Preparing features for training/ validation")
 
-        # Get all features we want to use
-        cols_features = self.get_all_features()
+        features = self.get_all_features()
+        X, cols_features_categorical = prepare_features_for_ranker(data, features)
 
-        # Only include features that are also in df
-        cols_features_available = data.get_feature_names_list()
-        for v in cols_features:
-            if v not in cols_features_available:
-                raise ValueError(f"Feature {v} not found in data")
-
-        # Get categorical features from data's feature names
-        cols_features_categorical = [col for col in cols_features if col in data.feature_names["categorical_features"]]
-
-        logger.info(f"Number of features: {len(cols_features)}")
         logger.info(f"Features by domain:")
         for domain, features in self.feature_config.items():
             logger.info(f"{domain}: {len(features)} features")
             logger.info(f"{features}")
-        logger.info(f"Number of features categorical: {len(cols_features_categorical)}")
-        logger.info(f"Cols features categorical: {cols_features_categorical}")
 
-        return data.data[cols_features], cols_features_categorical
+        return X, cols_features_categorical
 
     def train(self, train_data: LightGBMDataResult, valid_data: Optional[LightGBMDataResult] = None) -> None:
         """Train the ranking model.
@@ -191,6 +236,7 @@ class Ranker:
         self.model = LGBMRanker(
             **self.lightgbm_params["ranker_params"],
         )
+        logger.debug(f"Lightgbm params: {self.model.get_params()}")
 
         logger.info(f"Training model")
         metrics = {}
@@ -207,6 +253,10 @@ class Ranker:
             X_valid, _ = self.prepare_features(valid_data)
             y_valid = valid_data.label
             valid_groups = valid_data.group
+            callbacks = [
+                lgb.early_stopping(stopping_rounds=self.lightgbm_params["fit_params"]["early_stopping_rounds"]),
+                lgb.log_evaluation(period=0),
+            ]
 
             # Train model
             self.model.fit(
@@ -214,11 +264,9 @@ class Ranker:
                 y=y_train,
                 group=train_groups,
                 categorical_feature=cols_features_categorical,
-                eval_set=[(X_valid, y_valid)],
-                eval_group=[valid_groups],
-                callbacks=[
-                    lgb.early_stopping(stopping_rounds=self.lightgbm_params["fit_params"]["early_stopping_rounds"])
-                ],
+                eval_set=[(X_train, y_train), (X_valid, y_valid)],
+                eval_group=[train_groups, valid_groups],
+                callbacks=callbacks,
             )
 
         # Infer signature
@@ -240,7 +288,7 @@ class Ranker:
         return self.model.predict(X_test)
 
     def predict_ranks(self, data: LightGBMDataResult) -> dict[str, List[int]]:
-        """Predict ranks for each group. Assume there is only one gorup per customer."""
+        """Predict ranks for each group. Assume there is only one group per customer."""
         logger.info(f"Predicting ranks")
         if data.use_type != "inference":
             warnings.warn("Data is not in inference mode")
@@ -489,7 +537,9 @@ class RankerTrainValidPipeline:
             feature_importance = self.ranker.get_feature_importance()
 
             # Evaluate performance on valid inference set
-            metrics = self.evaluate(train_data, valid_train_data, valid_inference_data)
+            metrics = self.evaluate(
+                train_data=train_data, valid_inference_data=valid_inference_data, valid_train_data=valid_train_data
+            )
             mlflow.log_metrics(metrics)
 
             # Log configuration

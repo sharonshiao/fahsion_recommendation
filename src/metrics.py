@@ -17,9 +17,9 @@ def get_mapping_from_labels(raw_data: pd.DataFrame, col_score: str, is_label: bo
 
     # Sort by score
     if is_label:
-        data = raw_data[raw_data[col_score] == 1]
+        data = raw_data[raw_data[col_score] == 1].copy()  # Create an explicit copy
     else:
-        data = raw_data
+        data = raw_data.copy()  # Create an explicit copy
 
     # Sort by score (descending) by customer_id and week_num
     # Also sort by article_id to ensure the order is deterministic
@@ -33,7 +33,7 @@ def get_mapping_from_labels(raw_data: pd.DataFrame, col_score: str, is_label: bo
     if num_weeks > 1:
         map = {}
         for week in data["week_num"].unique():
-            week_df = data[data["week_num"] == week]
+            week_df = data[data["week_num"] == week].copy()  # Create an explicit copy
             map[week] = week_df.groupby("customer_id").article_id.apply(list).to_dict()
     else:
         map = data.groupby("customer_id").article_id.apply(list)
@@ -102,3 +102,21 @@ def mean_average_precision_at_k_hierarchical(map_true: dict, map_pred: dict, k: 
         sum_obs += n
     logger.info(f"Mean average precision atk: {np.sum(apks) / sum_obs}")
     return np.sum(apks) / sum_obs
+
+
+def ideal_average_precision_at_k(actual, predicted, k=12):
+    """Calculate ideal average precision at k."""
+    # Only keep items in predicted that are in actual
+    predicted = [p for p in predicted if p in actual]
+    return average_precision_at_k(actual, predicted, k)
+
+
+def ideal_mean_average_precision_at_k(map_true: dict, map_pred: dict, k: int = 12) -> float:
+    """Calculate ideal mean average precision at k."""
+    logger.info(f"Evaluating ranking")
+    apks = []
+    for c_id, gt in map_true.items():
+        pred = map_pred.get(c_id, [])
+        apks.append(ideal_average_precision_at_k(gt, pred[:k]))
+    logger.info(f"Ideal mean average precision at k: {np.mean(apks)}")
+    return np.mean(apks)

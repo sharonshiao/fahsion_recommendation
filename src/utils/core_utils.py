@@ -4,6 +4,7 @@ import random
 import sys
 
 import numpy as np
+import tqdm
 
 # import torch  # This would crash if called with LightGBM
 
@@ -44,6 +45,7 @@ def setup_logging(level=logging.DEBUG, log_file="tmp.log", remove_existing=False
     fhandler.setFormatter(formatter)
     root_logger.addHandler(fhandler)
     logger.debug(f"Logging setup complete to {log_file}")
+
     return root_logger
 
 
@@ -169,3 +171,48 @@ def human_readable_size(size_bytes):
         return f"{size:.0f} {units[unit_index]}"
     else:
         return f"{size:.2f} {units[unit_index]}"
+
+
+def convert_dict_values_to_float(d: dict) -> dict:
+    """
+    Convert all values in a dictionary to float and handle
+    """
+    for k, v in d.items():
+        if isinstance(v, str):
+            print(f"Converting {v} to float")
+            try:
+                d[k] = float(v)
+            except ValueError:
+                pass
+        elif isinstance(v, dict):
+            print(f"Converting {v} to float")
+            d[k] = convert_dict_values_to_float(v)
+    return d
+
+
+def decode_lightgbm_params(params: dict) -> dict:
+    """
+    Decode the lightgbm parameters to handle integer/floats from json.
+    """
+    cols_float = ["reg_lambda", "learning_rate", "colsample_bytree", "reg_alpha", "subsample"]
+    cols_int = [
+        "random_state",
+        "n_estimators",
+        "verbosity",
+        "min_child_samples",
+        "num_leaves",
+        "subsample_freq",
+    ]
+    cols_bool = ["feature_pre_filter"]
+    cols_float = set(cols_float)
+    cols_int = set(cols_int)
+    cols_bool = set(cols_bool)
+
+    for k, v in params.items():
+        if k in cols_float:
+            params[k] = float(v)
+        elif k in cols_int:
+            params[k] = int(v)
+        elif k in cols_bool:
+            params[k] = bool(v)
+    return params

@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -78,10 +78,12 @@ class RepurchaseSampleGenerator:
         # Create next week mapping
         customer_weeks["next_week"] = customer_weeks.groupby("customer_id")["week_num"].shift(-1)
         customer_weeks["next_week"] = customer_weeks["next_week"].fillna(default_future_week)
+        customer_weeks["next_week"] = customer_weeks["next_week"].astype(int)
 
         # Create and return the mapping dictionary
         logger.debug(f"Shape of customer_weeks: {customer_weeks.shape}")
-        return customer_weeks.set_index(["customer_id", "week_num"])["next_week"].to_dict()
+
+        return customer_weeks
 
     @staticmethod
     def _apply_week_mapping(
@@ -106,9 +108,14 @@ class RepurchaseSampleGenerator:
         logger.debug("Applying week mapping")
         # Apply mapping
         prev_transactions = df[required_columns].copy()
-        prev_transactions["week_num_new"] = prev_transactions.apply(
-            lambda x: week_mapping.get((x["customer_id"], x["week_num"])), axis=1
+
+        prev_transactions = prev_transactions.merge(
+            week_mapping,
+            left_on=["customer_id", "week_num"],
+            right_on=["customer_id", "week_num"],
+            how="left",
         )
+        prev_transactions.rename(columns={"next_week": "week_num_new"}, inplace=True)
 
         # Filter by week range
         mask = (prev_transactions["week_num_new"] >= week_num_start) & (

@@ -123,6 +123,10 @@ class PopularityBasedSampler:
 
         Returns:
             DataFrame containing negative samples based on popular items
+
+        Notes:
+        - We assume that there are popular items for each week_num - 1 for the week_num in the
+          unique_customer_week_pairs. so we can merge with popular items from previous week.
         """
         logger.info("Preparing negative samples by popularity")
 

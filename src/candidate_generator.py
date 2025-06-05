@@ -3,26 +3,18 @@ import logging
 import os
 import pickle
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
 
-from sampling.manager import (
-    NegativeSampleGenerator,
-    NegativeSamplingManager,
-    PopularityBasedSampler,
-    calculate_article_weekly_stats,
-    calculate_weekly_popular_items,
-)
 from src.config import DEFAULT_CANDIDATE_GENERATION_CONFIG
 from src.feature_extraction import (
     MAX_WEEK_DATE,
     MAX_WEEK_NUM,
-    WEEK_NUM_TEST,
-    WEEK_NUM_VALID,
     load_optimized_raw_data,
 )
+from src.sampling.manager import NegativeSamplingManager
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +169,7 @@ class CandidateGeneratorResult:
 
 
 @dataclass
-class CandidatePipelineConfig:
+class CandidateGeneratorPipelineConfig:
     """Configuration for candidate generation pipeline"""
 
     train_start_date: pd.Timestamp
@@ -334,64 +326,6 @@ class CandidateGenerator:
         transactions1["source"] = "positive"
 
         return transactions1
-
-    def _prepare_negative_samples_by_popularity(
-        self,
-        unique_customer_week_pairs: pd.DataFrame,
-        candidates_popular: pd.DataFrame,
-        weekly_articles_stats: pd.DataFrame = None,
-    ):
-        """Prepare negative samples using the PopularityBasedSampler.
-
-        This method delegates the popularity-based negative sampling to the
-        PopularityBasedSampler class for better modularity and maintainability.
-
-        Args:
-            unique_customer_week_pairs: DataFrame with unique customer-week pairs
-            candidates_popular: DataFrame with popular items by week
-            weekly_articles_stats: Optional DataFrame with weekly article statistics
-
-        Returns:
-            DataFrame with popularity-based negative samples
-        """
-        # Create sampler instance
-        popularity_sampler = PopularityBasedSampler()
-
-        # Generate samples using the sampler
-        negative_samples = popularity_sampler.generate(
-            unique_customer_week_pairs=unique_customer_week_pairs,
-            popular_items=candidates_popular,
-            weekly_stats=weekly_articles_stats,
-        )
-
-        logger.debug(f"Generated {len(negative_samples)} popularity-based negative samples")
-        return negative_samples
-
-    @staticmethod
-    def _prepare_negative_samples_by_previous_purchases(
-        transactions: pd.DataFrame, week_num_start: int, week_num_end: int, sample: str, customers_ids=None
-    ):
-        """Prepare negative samples by selecting articles that the customer bought last time."""
-        logger.info("Preparing negative samples by previous purchases")
-
-        negative_sample_generator = NegativeSampleGenerator(
-            required_columns=["customer_id", "week_num", "article_id", "price", "sales_channel_id"]
-        )
-        # For test and valid, we use the valid week number as the default future week
-        if sample == "test":
-            default_future_week = WEEK_NUM_TEST
-        else:
-            default_future_week = WEEK_NUM_VALID
-
-        negative_samples = negative_sample_generator.generate(
-            transactions=transactions,
-            week_num_start=week_num_start,
-            week_num_end=week_num_end,
-            customers_ids=customers_ids,
-            default_future_week=default_future_week,
-        )
-
-        return negative_samples
 
     def _generate_negative_samples(
         self,
@@ -654,12 +588,12 @@ class CandidateGenerator:
 class CandidateGeneratorPipeline:
     """End-to-end pipeline for candidate generation"""
 
-    def __init__(self, config: Optional[CandidatePipelineConfig] = None):
+    def __init__(self, config: Optional[CandidateGeneratorPipelineConfig] = None):
         """Initialize pipeline with config"""
         self.config = config
         self.generator = None
 
-    def setup(self, config: CandidatePipelineConfig = None):
+    def setup(self, config: CandidateGeneratorPipelineConfig = None):
         """Set up the pipeline with a config"""
         logger.info("Setting up CandidateGeneratorPipeline")
         if config is not None:

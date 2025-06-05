@@ -502,10 +502,16 @@ class ArticleDynamicFeatureProcessor:
         cols_features = ["weekly_sales_count", "weekly_avg_price"]
         base = base.merge(weekly_sales[cols_key + cols_features], on=cols_key, how="left")
 
-        # Fill in missing values with 0
+        # Fill in missing values for average price using ffill
+        base.sort_values(cols_key, inplace=True)
+        base["weekly_avg_price"] = base.groupby("article_id")["weekly_avg_price"].ffill()
+
+        # For remaining missing prices, use average price of all products that week
+        base["weekly_avg_price"] = base.groupby("week_num")["weekly_avg_price"].transform(lambda x: x.fillna(x.mean()))
+
+        # For sales, use 0
         fillna_dict = {
             "weekly_sales_count": 0,
-            "weekly_avg_price": 0,
         }
         base.fillna(fillna_dict, inplace=True)
         logger.debug(f"Weekly statistics features have shape: {base.shape}")

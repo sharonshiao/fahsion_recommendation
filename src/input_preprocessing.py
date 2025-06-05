@@ -63,6 +63,7 @@ class LightGBMDataProcessorConfig:
     include_article_static_features: bool = True
     include_article_dynamic_features: bool = True
     include_customer_static_features: bool = True
+    include_customer_dynamic_features: bool = True
     include_transaction_features: bool = True
     include_user_history: bool = False
 
@@ -339,6 +340,9 @@ class LightGBMDataProcessor:
             logger.debug("Merging with article dynamic features")
             base = self._merge_article_dynamic_features(base, article_dynamic_features)
 
+        # Generate features
+        base = self._generate_features(base)
+
         # Sort dataframe to create groups
         base.sort_values(["customer_id", "week_num", "article_id"], inplace=True)
         base = base.reset_index(drop=True)
@@ -389,6 +393,7 @@ class LightGBMDataProcessor:
 
         # Select relevant article features
         article_feature_list = article_static_features.get_feature_list(include_id=True)
+        logger.debug(f"Article feature list: {article_feature_list}")
 
         # Merge
         base = base.merge(article_static_features.data[article_feature_list], on="article_id", how="left")
@@ -406,6 +411,7 @@ class LightGBMDataProcessor:
 
         # Select relevant article dynamic features
         article_dynamic_feature_list = article_dynamic_features.get_feature_list(include_id=True)
+        logger.debug(f"Article dynamic feature list: {article_dynamic_feature_list}")
 
         # Merge on article_id and week_num
         # We need to merge using base.week_num = article_dynamic_features.data.week_num - 1 to get previous week's features
@@ -432,6 +438,7 @@ class LightGBMDataProcessor:
 
         # Select relevant customer features
         customer_feature_list = customer_static_features.get_feature_list(include_id=True)
+        logger.debug(f"Customer feature list: {customer_feature_list}")
 
         # Merge
         base = base.merge(customer_static_features.data[customer_feature_list], on="customer_id", how="left")
@@ -461,6 +468,7 @@ class LightGBMDataProcessor:
 
         # Select relevant customer dynamic features
         customer_dynamic_feature_list = customer_dynamic_features.get_feature_list(include_id=True)
+        logger.debug(f"Customer dynamic feature list: {customer_dynamic_feature_list}")
 
         # Merge on customer_id and week_num
         # We need to merge using base.week_num = customer_dynamic_features.data.week_num - 1 to get previous week's features
@@ -480,7 +488,7 @@ class LightGBMDataProcessor:
             df=base,
             article_embeddings=article_embeddings,
             article_embedding_type="text",
-            customer_text_embedding_col="customer_avg_text_embedding",
+            customer_embedding_col="customer_avg_text_embedding",
         )
 
         logger.debug("Calculating cosine similarities between customer and article image embeddings")
@@ -488,7 +496,7 @@ class LightGBMDataProcessor:
             df=base,
             article_embeddings=article_embeddings,
             article_embedding_type="image",
-            customer_text_embedding_col="customer_avg_image_embedding",
+            customer_embedding_col="customer_avg_image_embedding",
         )
 
         # Drop embedding columns
@@ -497,6 +505,18 @@ class LightGBMDataProcessor:
         logger.debug(f"Base shape after customer dynamic merge: {base.shape}")
         logger.debug(f"Base columns after customer dynamic merge: {base.columns.tolist()}")
         logger.debug(f"Missing values: {base.isnull().sum()}")
+        return base
+
+    def _generate_features(self, base: pd.DataFrame) -> pd.DataFrame:
+        """Generate features based on the merged dataframe."""
+        # Generate difference between user age and article mean age
+        base["age_difference"] = base["age"] - base["cumulative_mean_age"]
+        base["age_ratio"] = base["age_difference"] / base["age"]
+
+        # Generate difference between user historical price and item price
+        base["price_difference"] = base["price"] - base["customer_avg_price"]
+        base["price_ratio"] = base["price_difference"] / base["customer_avg_price"]
+
         return base
 
     def _collect_feature_names(
@@ -526,14 +546,36 @@ class LightGBMDataProcessor:
             logger.debug(f"Processing features from {key} dataset")
             self.features_by_source[key] = {}
             for feature_type in ["categorical_features", "numerical_features", "one_hot_features"]:
-                self.features_by_source[key][feature_type] = dataset.feature_names.get(feature_type, [])
-                self.features[feature_type].extend(dataset.feature_names.get(feature_type, []))
+                # Add list to avoid modifying the original feature names
+                self.features_by_source[key][feature_type] = list(dataset.feature_names.get(feature_type, []))
+                self.features[feature_type].extend(list(dataset.feature_names.get(feature_type, [])))
 
         # Add additional new features generated by the pipeline
         # New features added by customers dynamic features
-        self.features["numerical_features"].extend(["text_embedding_similarity", "image_embedding_similarity"])
+        self.features["numerical_features"].extend(
+            [
+                # From customers dynamic features
+                "text_embedding_similarity",
+                "image_embedding_similarity",
+                # Additional feature generated by the pipeline
+                "age_difference",
+                "age_ratio",
+                "price_difference",
+                "price_ratio",
+            ]
+        )
         self.features_by_source["customers_dynamic"]["numerical_features"].extend(
             ["text_embedding_similarity", "image_embedding_similarity"]
+        )
+
+        # Additional features generated by the pipeline
+        self.features_by_source["interactions"] = {
+            "numerical_features": [],
+            "categorical_features": [],
+            "one_hot_features": [],
+        }
+        self.features_by_source["interactions"]["numerical_features"].extend(
+            ["age_difference", "age_ratio", "price_difference", "price_ratio"]
         )
 
         logger.debug(f"Collected features: {self.features}")
@@ -619,7 +661,7 @@ class LightGBMDataPipeline:
                 feature_type="dynamic", subsample=self.config.subsample, seed=self.config.seed
             )
             article_embeddings_path = get_path_to_article_features(
-                feature_type="embeddings", subsample=self.config.subsample, seed=self.config.seed
+                feature_type="embedding", subsample=self.config.subsample, seed=self.config.seed
             )
 
         else:

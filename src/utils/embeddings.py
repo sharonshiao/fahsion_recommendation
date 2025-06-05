@@ -61,7 +61,7 @@ def calculate_df_batch_cosine_similarity(
     df: pd.DataFrame,
     article_embeddings: ArticleEmbeddingResult,
     article_embedding_type: str = "text",
-    customer_text_embedding_col: str = "customer_avg_text_embedding",
+    customer_embedding_col: str = "customer_avg_text_embedding",
     batch_size: int = 10000,
     monitor_memory: bool = True,
 ) -> np.ndarray:
@@ -97,9 +97,6 @@ def calculate_df_batch_cosine_similarity(
     if len(article_indices) == 0:
         return np.full(len(df), np.nan)
 
-    # Get embedding dimension for zero vectors
-    embedding_dim = article_embeddings.text_embeddings.shape[1]
-
     if monitor_memory:
         mem_gb, mem_percent = get_memory_usage()
         logger.info(f"Memory usage after loading article indices: {mem_gb:.2f} GB ({mem_percent:.1f}%)")
@@ -115,14 +112,18 @@ def calculate_df_batch_cosine_similarity(
         # Get article embeddings only for this batch
         if article_embedding_type == "text":
             batch_article_embeddings = article_embeddings.text_embeddings[article_indices[i:batch_end]]
+            # Get embedding dimension for zero vectors
+            embedding_dim = article_embeddings.text_embeddings.shape[1]
         elif article_embedding_type == "image":
             batch_article_embeddings = article_embeddings.image_embeddings[article_indices[i:batch_end]]
+            # Get embedding dimension for zero vectors
+            embedding_dim = article_embeddings.image_embeddings.shape[1]
 
         # Convert customer embeddings to numpy array only for this batch
         batch_customer_embeddings = np.array(
             [
                 emb if isinstance(emb, np.ndarray) else np.zeros(embedding_dim)
-                for emb in df[customer_text_embedding_col].iloc[i:batch_end]
+                for emb in df[customer_embedding_col].iloc[i:batch_end]
             ],
             dtype=np.float32,
         )
