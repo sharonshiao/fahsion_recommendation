@@ -316,6 +316,8 @@ class ArticleDynamicFeaturePipelineConfig:
             # Dates
             "start_week_num": 76,
             "end_week_num": 104,
+            "history_start_week_num": 76,
+            "history_end_week_num": 104,
         }
     )
 
@@ -403,6 +405,8 @@ class ArticleDynamicFeatureProcessor:
         self.config = config
         self.start_week_num = self.config.get("start_week_num", None)
         self.end_week_num = self.config.get("end_week_num", None)
+        self.history_start_week_num = self.config.get("history_start_week_num", None)
+        self.history_end_week_num = self.config.get("history_end_week_num", None)
 
         # Features
         self._default_categorical_features = []
@@ -439,7 +443,9 @@ class ArticleDynamicFeatureProcessor:
             raise ValueError("week_num column not found in transactions")
 
         # Extract transactions for the given time period
-        transactions = transactions.query("week_num >= @self.start_week_num and week_num <= @self.end_week_num")
+        transactions = transactions.query(
+            "week_num >= @self.history_start_week_num and week_num <= @self.history_end_week_num"
+        )
 
         # Generate a cross join of articles and weeks
         base_articles_week = self._generate_articles_week_cross_join(articles, self.start_week_num, self.end_week_num)

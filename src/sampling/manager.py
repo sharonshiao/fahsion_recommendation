@@ -31,13 +31,17 @@ class NegativeSamplingManager:
 
         Args:
             sampling_strategies: Dictionary mapping strategy names to their configurations
-                Example: {'popularity': {'top_k_items': 12}, 'repurchase': {}}
+                Example: {'popularity': {'top_k_items': 12}, 'repurchase': {"strategy": "last_k_items", "k": 12}}
         """
         self.sampling_strategies = sampling_strategies
         self.required_columns = ["customer_id", "week_num", "article_id", "price", "sales_channel_id"]
         self.samplers = {
             "popularity": PopularityBasedSampler(required_columns=self.required_columns),
-            "repurchase": RepurchaseSampleGenerator(required_columns=self.required_columns),
+            "repurchase": RepurchaseSampleGenerator(
+                required_columns=self.required_columns,
+                strategy=sampling_strategies["repurchase"]["strategy"],
+                k=sampling_strategies["repurchase"]["k"],
+            ),
         }
         logger.info(f"Initialized NegativeSamplingManager with strategies: {list(sampling_strategies.keys())}")
 
@@ -164,7 +168,11 @@ class NegativeSamplingManager:
         return samples
 
     def combine_samples(
-        self, transactions: pd.DataFrame, list_candidates: List[pd.DataFrame], sample_type: str = "train"
+        self,
+        transactions: pd.DataFrame,
+        list_candidates: List[pd.DataFrame],
+        sample_type: str = "train",
+        restrict_negative_samples: bool = True,
     ) -> pd.DataFrame:
         """Combine negative samples from different sources and remove duplicates.
 
@@ -172,6 +180,7 @@ class NegativeSamplingManager:
             transactions: Original transaction data
             list_candidates: List of DataFrames with negative samples
             sample_type: 'train' or 'inference'
+            restrict_negative_samples: If True, we drop negative samples that are in the observed transactions
 
         Returns:
             Combined and deduplicated negative samples
@@ -191,7 +200,7 @@ class NegativeSamplingManager:
         negative_samples.drop_duplicates(inplace=True)
 
         # For training data, remove samples that exist in actual transactions
-        if sample_type == "train":
+        if sample_type == "train" and restrict_negative_samples:
             logger.debug("Removing samples that exist in original transactions")
 
             # Key columns for matching
@@ -221,6 +230,7 @@ class NegativeSamplingManager:
         week_num_end: int,
         sample_type: str = "train",
         customers_ids: Optional[List[int]] = None,
+        restrict_negative_samples: bool = True,
     ) -> Tuple[pd.DataFrame, Optional[np.ndarray], pd.DataFrame]:
         """Generate negative samples using configured strategies.
 
@@ -237,6 +247,7 @@ class NegativeSamplingManager:
             week_num_end: End week number
             sample_type: 'train' or 'inference'
             customers_ids: Optional list of customer IDs to filter
+            restrict_negative_samples: If True, we drop negative samples that are in the observed transactions
 
         Returns:
             Tuple of (negative_samples, default_prediction, popular_items)
@@ -289,7 +300,10 @@ class NegativeSamplingManager:
 
         # Combine samples from all strategies
         negative_samples = self.combine_samples(
-            transactions=transactions, list_candidates=all_samples, sample_type=sample_type
+            transactions=transactions,
+            list_candidates=all_samples,
+            sample_type=sample_type,
+            restrict_negative_samples=restrict_negative_samples,
         )
 
         return negative_samples, default_prediction, popular_items

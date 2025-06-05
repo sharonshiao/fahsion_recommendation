@@ -34,12 +34,13 @@ def sample_customer_week_pairs():
     )
 
 
+# FIX: we currently only have test cases for last_purchase strategy. To add test cases for last_k_items strategy,
 @pytest.fixture
 def mock_sampling_strategies():
     """Fixture providing mock sampling strategies configuration."""
     return {
         "popularity": {"top_k_items": 2},
-        "repurchase": {},
+        "repurchase": {"strategy": "last_purchase", "k": 12},
     }
 
 

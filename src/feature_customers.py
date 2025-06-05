@@ -423,6 +423,10 @@ class CustomerDynamicFeatureProcessor:
 
         Returns:
             DataFrame with average embeddings for each customer-week pair
+
+        Notes:
+            - Embeddings are calculated using the last k items purchased by each customer up to and including each week.
+              When joining as features, we need to use week_num - 1 to get the previous week's features.
         """
         logger.info("Processing customer dynamic features")
 

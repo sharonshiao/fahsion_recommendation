@@ -105,7 +105,7 @@ def test_calculate_df_batch_cosine_similarity(
                 df=sample_embeddings_df,
                 article_embeddings=mock_article_embeddings,
                 article_embedding_type=embedding_type,
-                customer_text_embedding_col="customer_avg_text_embedding",
+                customer_embedding_col="customer_avg_text_embedding",
             )
     else:
         # Test with different batch sizes to ensure batching works correctly
@@ -114,7 +114,7 @@ def test_calculate_df_batch_cosine_similarity(
                 df=sample_embeddings_df,
                 article_embeddings=mock_article_embeddings,
                 article_embedding_type=embedding_type,
-                customer_text_embedding_col="customer_avg_text_embedding",
+                customer_embedding_col="customer_avg_text_embedding",
                 batch_size=batch_size,
                 monitor_memory=False,
             )

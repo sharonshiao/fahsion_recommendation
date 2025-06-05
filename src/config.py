@@ -2,15 +2,16 @@ import numpy as np
 import pandas as pd
 
 DEFAULT_TRAIN_END_DATE = pd.to_datetime("2020-09-08")
-DEFAULT_NUM_TRAIN_WEEKS = 6
+DEFAULT_NUM_TRAIN_WEEKS = 10
 DEFAULT_TRAIN_START_DATE = DEFAULT_TRAIN_END_DATE - pd.DateOffset(days=DEFAULT_NUM_TRAIN_WEEKS * 7 - 1)
 DEFAULT_SEED = 42
-DEFAULT_SUBSAMPLE = 0.05
+DEFAULT_SUBSAMPLE = 0.25
 DEFAULT_TEST_WEEK_NUM = 104
 DEFAULT_VALID_WEEK_NUM = 103
 DEFAULT_TRAIN_END_WEEK_NUM = 102
 DEFAULT_TRAIN_START_WEEK_NUM = DEFAULT_TRAIN_END_WEEK_NUM - DEFAULT_NUM_TRAIN_WEEKS + 1
 DEFAULT_HISTORY_START_WEEK_NUM = 52
+DEFAULT_HISTORY_START_DATE = DEFAULT_TRAIN_START_DATE - pd.DateOffset(days=7 * 26)
 DEFAULT_HISTORY_END_WEEK_NUM = 104
 
 EXPERIMENT_NAME = "fashion_recommendation"
@@ -43,8 +44,8 @@ DEFAULT_CUSTOMER_DYNAMIC_FEATURES_CONFIG = {
     "config_processor": {
         "history_start_week_num": DEFAULT_HISTORY_START_WEEK_NUM,
         "history_end_week_num": DEFAULT_HISTORY_END_WEEK_NUM,
-        "start_week_num": DEFAULT_TRAIN_START_WEEK_NUM,
-        "end_week_num": DEFAULT_TRAIN_END_WEEK_NUM,
+        "start_week_num": DEFAULT_TRAIN_START_WEEK_NUM - 1,
+        "end_week_num": DEFAULT_TEST_WEEK_NUM,
         "k_items": 5,
     },
     "subsample": DEFAULT_SUBSAMPLE,
@@ -85,8 +86,10 @@ DEFAULT_ARTICLE_DYNAMIC_FEATURES_CONFIG = {
             "cumulative_sales_count",
         ],
         "one_hot_features": [],
-        "start_week_num": DEFAULT_HISTORY_START_WEEK_NUM,
-        "end_week_num": DEFAULT_HISTORY_END_WEEK_NUM,
+        "start_week_num": DEFAULT_TRAIN_START_WEEK_NUM - 1,
+        "end_week_num": DEFAULT_TEST_WEEK_NUM,
+        "history_start_week_num": DEFAULT_HISTORY_START_WEEK_NUM,
+        "history_end_week_num": DEFAULT_HISTORY_END_WEEK_NUM,
     },
     "subsample": DEFAULT_SUBSAMPLE,
     "seed": DEFAULT_SEED,
@@ -122,21 +125,30 @@ DEFAULT_ARTICLE_EMBEDDING_CONFIG = {
 DEFAULT_CANDIDATE_GENERATION_CONFIG = {
     "train_start_date": DEFAULT_TRAIN_START_DATE,
     "train_end_date": DEFAULT_TRAIN_END_DATE,
-    "n_sample_week_threshold_history": -1,
+    "history_start_date": DEFAULT_HISTORY_START_DATE,
+    "n_sample_week_threshold": -1,
     "negative_sample_strategies": {
         "popularity": {
             "top_k_items": 30,
         },
-        "repurchase": {},
+        "repurchase": {
+            "strategy": "last_k_items",
+            "k": 12,
+        },
     },
     "inference_sample_strategies": {
         "popularity": {
             "top_k_items": 30,
         },
-        "repurchase": {},
+        "repurchase": {
+            "strategy": "last_k_items",
+            "k": 12,
+        },
     },
     "subsample": DEFAULT_SUBSAMPLE,
     "seed": DEFAULT_SEED,
+    "restrict_positive_samples": True,
+    "neg_to_pos_ratio": 30.0,
 }
 
 
@@ -261,7 +273,51 @@ DEFAULT_RANKER_HYPERPARAMETERS_PIPELINE_CONFIG = {
     "experiment_name": EXPERIMENT_NAME,
     # Parameters with hyperparameter tuning
     "hyperparameter_config": {
-        "feature_config": DEFAULT_RANKER_PIPELINE_CONFIG["feature_config"],
+        "feature_config": {
+            # Feature lists by domain
+            "article_static_features": [
+                "product_type_no",
+                "graphical_appearance_no",
+                "colour_group_code",
+                "perceived_colour_value_id",
+                "perceived_colour_master_id",
+                "department_no",
+                "index_code",
+                "index_group_no",
+                "section_no",
+                "garment_group_no",
+            ],
+            "article_dynamic_features": [
+                # "weekly_sales_count",
+                # "weekly_avg_price",
+                # "cumulative_mean_age",
+                # "cumulative_sales_count",
+            ],
+            "customer_static_features": [
+                # "age_bin",
+                "age",
+                "club_member_status",
+                "fashion_news_frequency",
+                "fn",
+                "active",
+                "postal_code",
+            ],
+            "customer_dynamic_features": [
+                # "customer_avg_price",
+                # "text_embedding_similarity",
+                # "image_embedding_similarity",
+            ],
+            "transaction_features": [
+                # "price",
+                # "bestseller_rank",
+            ],
+            "interactions": [
+                # "age_difference",
+                # "age_ratio",
+                # "price_difference",
+                # "price_ratio",
+            ],
+        },
         "lightgbm_fixed_params": {
             "objective": "lambdarank",
             "metrics": "ndcg",
@@ -330,7 +386,7 @@ DEFAULT_RANKER_HYPERPARAMETERS_PIPELINE_CONFIG = {
         # "subsample": trial.suggest_float("subsample", 0.01, 1.0),
         # "subsample_freq": trial.suggest_int("subsample_freq", 1, 7),
         # "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
-        "n_trials": 100,
+        "n_trials": 50,
         "early_stopping_rounds": 25,
         "metric_return": "mapk_valid_inference",
     },
@@ -339,12 +395,12 @@ DEFAULT_RANKER_HYPERPARAMETERS_PIPELINE_CONFIG = {
 # THis is the mlflow run id used for hyperparameter tuning
 # This will be used for training the model with tuned hyperparameters
 # RUN_ID_HYPERPARAMETER_TUNING = "892dc8321cf34c689440de0d536f72f7" # Base, for testing pipeline
-RUN_ID_HYPERPARAMETER_TUNING = "04b35282c29a459998dc2200885348e6"
+RUN_ID_HYPERPARAMETER_TUNING = "afbd31fb97b3437a89023e5587d02d3a"
 
 
 # Run if for the tuned ranker
-# RUN_ID_TUNED_RANKER = "bd823ea190a7481bbdb932be52d4cb8b"  # Base, for testing pipeline
-RUN_ID_TUNED_RANKER = "918c14f84c5d4c49b20461053dd198c7"
+# RUN_ID_TUNED_xRANKER = "bd823ea190a7481bbdb932be52d4cb8b"  # Base, for testing pipeline
+RUN_ID_TUNED_RANKER = "afe1c7386b374e3d9b11588803db5ee0"
 
 DEFAULT_RANKER_EVALUATOR_CONFIG = {
     # I/O

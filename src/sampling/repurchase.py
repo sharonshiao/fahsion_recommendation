@@ -17,13 +17,22 @@ class RepurchaseSampleGenerator:
     def __init__(
         self,
         required_columns: List[str] = ["customer_id", "week_num", "article_id", "price", "sales_channel_id"],
+        strategy: str = "last_purchase",
+        k: int = 12,
     ):
         """Initialize the generator with configuration.
 
         Args:
             required_columns: List of required columns in transaction data
+            strategy: Strategy to use for generating negative samples
+            k: Number of items to get for last_k_items strategy. only used if strategy is "last_k_items"
         """
         self.required_columns = required_columns
+
+        if strategy not in ["last_purchase", "last_k_items"]:
+            raise ValueError(f"Invalid strategy: {strategy}")
+        self.strategy = strategy
+        self.k = k
 
     @staticmethod
     def _validate_input(transactions: pd.DataFrame, required_columns: List[str]) -> None:
@@ -130,6 +139,41 @@ class RepurchaseSampleGenerator:
         logger.debug(f"Shape of prev_transactions after applying week mapping: {prev_transactions.shape}")
         return prev_transactions
 
+    @staticmethod
+    def _get_last_k_items(
+        transactions: pd.DataFrame, required_columns: List[str], k: int, week_num_start: int, week_num_end: int
+    ) -> pd.DataFrame:
+        """Get last k items purchased strictly before each week_num and customer for every week in the range week_num_start to
+        week_num_end (inclusive).
+
+        Args:
+            df: Input DataFrame
+            required_columns: List of required columns
+            k: Number of items to get
+            week_num_start: Start week number for prediction
+            week_num_end: End week number for prediction
+        """
+        logger.info(f"Getting last k items for weeks {week_num_start} to {week_num_end}")
+        # Sort the transactions dataframe in descending order of t_dat and article_id for each customer
+        # Get the required columns and drop duplicates
+        history = (
+            transactions.sort_values(["customer_id", "week_num", "article_id"], ascending=[True, False, True])
+            .drop_duplicates(subset=["customer_id", "week_num", "article_id"])[required_columns]
+            .copy()
+        )
+
+        list_candidates = []
+        for week_num in range(week_num_start, week_num_end + 1):
+            logger.debug(f"Getting last k items for week {week_num}")
+            mask = history["week_num"] < week_num
+            history_week = history[mask].copy()
+            # Use the first k items since the list has been sorted in descending order of time
+            history_week = history_week.groupby("customer_id").head(k)
+            history_week["week_num"] = week_num
+            list_candidates.append(history_week)
+
+        return pd.concat(list_candidates, axis=0, ignore_index=True)
+
     def generate(
         self,
         transactions: pd.DataFrame,
@@ -143,16 +187,15 @@ class RepurchaseSampleGenerator:
         This method orchestrates the negative sample generation process by:
         1. Validating input data
         2. Filtering by customers if needed
-        3. Creating week mappings
-        4. Applying mappings and filtering by week range
-        5. Adding source information
+        3. Generate candidates using the specific strategy
+        4. Adding source information
 
         Args:
             transactions: DataFrame containing transaction data
             week_num_start: Start week number for prediction
             week_num_end: End week number for prediction
             customers_ids: Optional list of customer IDs to filter by
-            default_future_week: Week number for future weeks
+            default_future_week: Week number for future weeks. Only used if strategy is "last_purchase".
 
         Returns:
             DataFrame containing negative samples for weeks between week_num_start and week_num_end.
@@ -163,11 +206,14 @@ class RepurchaseSampleGenerator:
         self._validate_input(transactions, self.required_columns)
         df = self._filter_customers(transactions.copy(), customers_ids)
 
-        # Create week mapping
-        week_mapping = self._create_week_mapping(df, default_future_week)
+        if self.strategy == "last_purchase":
+            # Create week mapping
+            week_mapping = self._create_week_mapping(df, default_future_week)
 
-        # Apply mapping and filter
-        result = self._apply_week_mapping(df, self.required_columns, week_mapping, week_num_start, week_num_end)
+            # Apply mapping and filter
+            result = self._apply_week_mapping(df, self.required_columns, week_mapping, week_num_start, week_num_end)
+        elif self.strategy == "last_k_items":
+            result = self._get_last_k_items(df, self.required_columns, self.k, week_num_start, week_num_end)
 
         # Add source column
         result["source"] = "repurchase"

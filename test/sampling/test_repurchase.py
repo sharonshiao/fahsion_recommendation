@@ -35,13 +35,50 @@ def expected_negative_samples():
     )
 
 
-def test_prepare_negative_samples_by_previous_purchases_basic(purchase_history_data, expected_negative_samples):
+@pytest.mark.parametrize(
+    "strategy, week_num_start, week_num_end, expected_negative_samples",
+    [
+        (
+            "last_purchase",
+            0,
+            100,
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 1, 1, 1, 2, 2, 3],
+                    "week_num": [1, 2, 4, 100, 3, 100, 100],
+                    "article_id": [100, 101, 102, 103, 201, 202, 301],
+                    "price": [5.0, 10.0, 20.0, 30.0, 15.0, 25.0, 35.0],
+                    "sales_channel_id": [2, 1, 2, 1, 1, 2, 1],
+                    "source": ["repurchase"] * 7,
+                }
+            ),
+        ),
+        (
+            "last_k_items",
+            1,
+            4,
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3],
+                    "week_num": [1, 2, 2, 3, 3, 4, 4, 2, 3, 4, 4, 3, 4],
+                    "article_id": [100, 100, 101, 101, 102, 101, 102, 201, 201, 201, 202, 301, 301],
+                    "price": [5.0, 5.0, 10.0, 10.0, 20.0, 10.0, 20.0, 15.0, 15.0, 15.0, 25.0, 35.0, 35.0],
+                    "sales_channel_id": [2, 2, 1, 1, 2, 1, 2, 1, 1, 1, 2, 1, 1],
+                    "source": ["repurchase"] * 13,
+                }
+            ),
+        ),
+    ],
+)
+def test_prepare_negative_samples_by_previous_purchases_basic(
+    purchase_history_data, strategy, week_num_start, week_num_end, expected_negative_samples
+):
     """Test basic functionality and accuracy of NegativeSampleGenerator class."""
-    negative_sample_generator = RepurchaseSampleGenerator()
+    negative_sample_generator = RepurchaseSampleGenerator(strategy=strategy, k=2)
     result = negative_sample_generator.generate(
         transactions=purchase_history_data,
-        week_num_start=0,
-        week_num_end=100,
+        week_num_start=week_num_start,
+        week_num_end=week_num_end,
         default_future_week=100,
     )
 
@@ -50,14 +87,11 @@ def test_prepare_negative_samples_by_previous_purchases_basic(purchase_history_d
     assert set(result.columns) == expected_columns
     assert result["source"].unique() == ["repurchase"]
 
-    # Verify week mapping
-    # Customer 1: week 0 -> 1, week 1 -> 2, week 2 -> 4, week 4 -> 100 (validation)
-    # Customer 2: week 1 -> 3, week 3 -> 100 (validation)
-    # Customer 3: week 2 -> 100 (validation)
-    customer1_weeks = result[result["customer_id"] == 1]["week_num"].unique()
-    assert set(customer1_weeks) & {1, 2, 4, 100} == set(customer1_weeks)
-
     # Verify correctness of dataframe
+    result.sort_values(by=["customer_id", "week_num", "article_id"], inplace=True)
+    expected_negative_samples.sort_values(by=["customer_id", "week_num", "article_id"], inplace=True)
+    result.reset_index(drop=True, inplace=True)
+    expected_negative_samples.reset_index(drop=True, inplace=True)
     assert_frame_equal(result, expected_negative_samples)
 
 
@@ -324,3 +358,69 @@ def test_apply_week_mapping(
 
     # Check data types
     assert result["week_num"].dtype == np.int64
+
+
+@pytest.mark.parametrize(
+    "input_data, required_cols, k, week_num_start, week_num_end, expected_result",
+    [
+        (
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 1, 1, 2],
+                    "week_num": [1, 2, 3, 2],
+                    "article_id": [100, 101, 102, 200],
+                    "price": [10.0, 20.0, 5.0, 15.0],
+                    "sales_channel_id": [1, 2, 1, 1],
+                }
+            ),
+            ["customer_id", "week_num", "article_id", "price", "sales_channel_id"],
+            2,
+            2,
+            4,
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 1, 1, 2, 1, 1, 2],
+                    "week_num": [2, 3, 3, 3, 4, 4, 4],
+                    "article_id": [100, 100, 101, 200, 101, 102, 200],
+                    "price": [10.0, 10.0, 20.0, 15.0, 20.0, 5.0, 15.0],
+                    "sales_channel_id": [1, 1, 2, 1, 2, 1, 1],
+                }
+            ),
+        ),
+        # Multiple items in one week
+        (
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 1, 1],
+                    "week_num": [1, 1, 1],
+                    "article_id": [100, 101, 102],
+                    "price": [10.0, 20.0, 5.0],
+                    "sales_channel_id": [1, 2, 1],
+                }
+            ),
+            ["customer_id", "week_num", "article_id", "price", "sales_channel_id"],
+            2,
+            2,
+            2,
+            pd.DataFrame(
+                {
+                    "customer_id": [1, 1],
+                    "week_num": [2, 2],
+                    "article_id": [100, 101],
+                    "price": [10.0, 20.0],
+                    "sales_channel_id": [1, 2],
+                }
+            ),
+        ),
+    ],
+)
+def test_get_last_k_items(input_data, required_cols, k, week_num_start, week_num_end, expected_result):
+    """Test last k items retrieval with different scenarios."""
+
+    result = RepurchaseSampleGenerator._get_last_k_items(input_data, required_cols, k, week_num_start, week_num_end)
+    result.sort_values(by=["customer_id", "week_num", "article_id"], inplace=True)
+    expected_result.sort_values(by=["customer_id", "week_num", "article_id"], inplace=True)
+    result.reset_index(drop=True, inplace=True)
+    expected_result.reset_index(drop=True, inplace=True)
+
+    assert_frame_equal(result, expected_result)

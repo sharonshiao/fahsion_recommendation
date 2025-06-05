@@ -174,18 +174,29 @@ class CandidateGeneratorPipelineConfig:
 
     train_start_date: pd.Timestamp
     train_end_date: pd.Timestamp
-    n_sample_week_threshold_history: int = -1
+    history_start_date: pd.Timestamp
+    n_sample_week_threshold: int = -1
     negative_sample_strategies: Dict[str, Dict[str, Any]] = None
     inference_sample_strategies: Dict[str, Dict[str, Any]] = None
     subsample: float = 1.0  # Fraction of data to use for training
     seed: int = 42  # Random seed for reproducibility
+    restrict_positive_samples: bool = (
+        False  # If True, only keep positive samples that are in the candidate generation sources
+    )
+    neg_to_pos_ratio: float = 30.0  # Expected ratio of negative to positive samples. If -1, no adjustment is done.
 
     def __post_init__(self):
         """Set default values if not provided"""
         if self.negative_sample_strategies is None:
-            self.negative_sample_strategies = {"popularity": {"top_k_items": 12}, "repurchase": {}}
+            self.negative_sample_strategies = {
+                "popularity": {"top_k_items": 12},
+                "repurchase": {"strategy": "last_k_items", "k": 12},
+            }
         if self.inference_sample_strategies is None:
-            self.inference_sample_strategies = {"popularity": {"top_k_items": 12}, "repurchase": {}}
+            self.inference_sample_strategies = {
+                "popularity": {"top_k_items": 12},
+                "repurchase": {"strategy": "last_k_items", "k": 12},
+            }
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]):
@@ -228,10 +239,17 @@ class CandidateGenerator:
         self.train_end_date = config["train_end_date"]
         self.train_start_week_num = week_num_from_week(self.train_start_date)
         self.train_end_week_num = week_num_from_week(self.train_end_date)
-        self.history_start_date = self.train_start_date - pd.DateOffset(days=7)
-        self.n_sample_week_threshold_history = config["n_sample_week_threshold_history"]
+        if self.train_start_date - config["history_start_date"] < pd.Timedelta(days=7):
+            raise ValueError(
+                f"History start date {config['history_start_date']} is less than 7 days before train start date {self.train_start_date}"
+            )
+        self.history_start_date = config["history_start_date"]
+
+        self.n_sample_week_threshold = config["n_sample_week_threshold"]
         self.negative_sample_strategies = config["negative_sample_strategies"]
         self.inference_sample_strategies = config["inference_sample_strategies"]
+        self.restrict_positive_samples = config["restrict_positive_samples"]
+        self.neg_to_pos_ratio = config["neg_to_pos_ratio"]
 
     @staticmethod
     def prepare_base_transactions_data(
@@ -341,6 +359,7 @@ class CandidateGenerator:
         train_end_week_num: int,
         sample: str,
         customers_ids=None,
+        restrict_positive_samples: bool = False,
     ):
         """Generate negative samples using configured strategies.
 
@@ -370,6 +389,7 @@ class CandidateGenerator:
         sampling_manager = NegativeSamplingManager(sampling_strategies=sampling_strategies)
 
         # Generate samples
+        restrict_negative_samples = not restrict_positive_samples
         return sampling_manager.generate_samples(
             transactions=transactions,
             unique_customer_week_pairs=unique_transactions,
@@ -377,6 +397,7 @@ class CandidateGenerator:
             week_num_end=train_end_week_num,
             sample_type=sample,
             customers_ids=customers_ids,
+            restrict_negative_samples=restrict_negative_samples,
         )
 
     def _combine_positive_negative_samples(self, positive_samples: pd.DataFrame, negative_samples: pd.DataFrame):
@@ -385,10 +406,47 @@ class CandidateGenerator:
         logger.info("Combining positive and negative samples")
         logger.debug(f"Number of positive samples: {len(positive_samples)}")
         logger.debug(f"Number of negative samples: {len(negative_samples)}")
-        positive_samples["label"] = 1
-        negative_samples["label"] = 0
-        combined_samples = pd.concat([positive_samples, negative_samples], axis=0, ignore_index=True)
+
+        if self.restrict_positive_samples:
+            # Only keep positive samples that are in the candidate generation sources
+            combined_samples = negative_samples.merge(
+                positive_samples[["customer_id", "week_num", "article_id"]],
+                on=["customer_id", "week_num", "article_id"],
+                how="left",
+                indicator=True,
+            )
+            combined_samples["label"] = combined_samples["_merge"].apply(lambda x: 1 if x == "both" else 0)
+            combined_samples.drop(columns=["_merge"], inplace=True)
+        else:
+            positive_samples["label"] = 1
+            negative_samples["label"] = 0
+            combined_samples = pd.concat([positive_samples, negative_samples], axis=0, ignore_index=True)
         logger.debug(f"Number of combined samples: {len(combined_samples)}")
+        return combined_samples
+
+    def _adjust_neg_to_pos_ratio(self, combined_samples: pd.DataFrame):
+        """Adjust the negative to positive ratio to the expected ratio."""
+        logger.info(f"Adjusting negative to positive ratio to {self.neg_to_pos_ratio}")
+        # Count the number of positive and negative samples
+        num_positive = combined_samples["label"].sum()
+        num_negative = len(combined_samples) - num_positive
+        current_ratio = num_negative / num_positive
+        if current_ratio > self.neg_to_pos_ratio:
+            logger.info(
+                f"Current ratio {current_ratio} is greater than expected ratio {self.neg_to_pos_ratio}, subsampling negative samples"
+            )
+            # Subsample negative samples to the expected ratio
+            subsample_ratio = self.neg_to_pos_ratio / current_ratio
+            positive_samples = combined_samples[combined_samples["label"] == 1]
+            negative_samples = combined_samples[combined_samples["label"] == 0]
+            negative_samples = negative_samples.groupby(["customer_id", "week_num"]).sample(frac=subsample_ratio)
+            combined_samples = pd.concat([positive_samples, negative_samples], axis=0, ignore_index=True)
+
+            observed_ratio = len(negative_samples) / len(positive_samples)
+            logger.info("Finished subsampling negative samples")
+            logger.info(f"Observed negative to positive ratio {observed_ratio}")
+            logger.info(f"Total number of samples {len(combined_samples)}")
+
         return combined_samples
 
     def _add_date_features(self, transactions: pd.DataFrame, col_date: str) -> pd.DataFrame:
@@ -446,7 +504,7 @@ class CandidateGenerator:
 
         # Prepare positive samples
         positive_transactions = self._prepare_positive_samples(
-            transactions, train_start_date, train_end_date, self.n_sample_week_threshold_history
+            transactions, train_start_date, train_end_date, self.n_sample_week_threshold
         )
         customers_ids = positive_transactions["customer_id"].unique()
         unique_transactions = positive_transactions[["customer_id", "week_num"]].drop_duplicates()
@@ -456,12 +514,17 @@ class CandidateGenerator:
             unique_transactions=unique_transactions,
             train_start_week_num=train_start_week_num,
             train_end_week_num=train_end_week_num,
+            restrict_positive_samples=self.restrict_positive_samples,
             sample="train",
             customers_ids=customers_ids,
         )
 
         # Combine positive and negative samples
         combined_samples = self._combine_positive_negative_samples(positive_transactions, negative_transactions)
+
+        # Adjust negative to positive ratio
+        if self.neg_to_pos_ratio != -1:
+            combined_samples = self._adjust_neg_to_pos_ratio(combined_samples)
 
         # Generate features
         combined_samples = self._generate_transaction_features(combined_samples, top_k_articles_by_week)
@@ -545,6 +608,7 @@ class CandidateGenerator:
             train_end_week_num=inference_week_num,
             sample=sample,
             customers_ids=customers_ids,
+            restrict_positive_samples=self.restrict_positive_samples,
         )
 
         # Generate features

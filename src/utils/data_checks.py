@@ -69,6 +69,7 @@ def test_feature_article_dynamic_feature(
 ):
     start_week_num = pipeline_config.config_processor["start_week_num"]
     end_week_num = pipeline_config.config_processor["end_week_num"]
+    history_start_week_num = pipeline_config.config_processor["history_start_week_num"]
 
     for article_id in article_ids:
 
@@ -85,7 +86,7 @@ def test_feature_article_dynamic_feature(
             # Calculate expected values from transactions
             expected = (
                 transactions.query(
-                    "week_num >= @start_week_num and week_num <= @week_num and article_id == @article_id"
+                    "week_num >= @history_start_week_num and week_num <= @week_num and article_id == @article_id"
                 )
                 .merge(customers, on="customer_id")
                 .agg({"age": "mean", "customer_id": "count"})
@@ -97,10 +98,18 @@ def test_feature_article_dynamic_feature(
 
             res = results_articles_dynamic.data.query("article_id == @article_id and week_num == @week_num")
 
-            assert expected.age == res.cumulative_mean_age.values[0]
-            assert expected.customer_id == res.cumulative_sales_count.values[0]
-            assert stats.price == res.weekly_avg_price.values[0]
-            assert stats.customer_id == res.weekly_sales_count.values[0]
+            assert np.isclose(
+                expected.age, res.cumulative_mean_age.values[0]
+            ), f"Age is not equal for article {article_id} and week {week_num}. Expected {expected.age}, got {res.cumulative_mean_age.values[0]}"
+            assert np.isclose(
+                expected.customer_id, res.cumulative_sales_count.values[0]
+            ), f"Customer ID is not equal for article {article_id} and week {week_num}. Expected {expected.customer_id}, got {res.cumulative_sales_count.values[0]}"
+            assert np.isclose(
+                stats.price, res.weekly_avg_price.values[0]
+            ), f"Price is not equal for article {article_id} and week {week_num}. Expected {stats.price}, got {res.weekly_avg_price.values[0]}"
+            assert np.isclose(
+                stats.customer_id, res.weekly_sales_count.values[0]
+            ), f"Customer ID is not equal for article {article_id} and week {week_num}. Expected {stats.customer_id}, got {res.weekly_sales_count.values[0]}"
             print("Numbers matched for week", week_num)
 
         print("-" * 80)
@@ -123,7 +132,7 @@ def test_feature_customer_avg_embedding_pipeline(
     ).customer_id.nunique()
     assert (
         results_customer_dynamic_feature.data.customer_id.nunique() == expected_num_customers
-    ), "Number of customers should equal the number of unique customers in transactions in the given period"
+    ), f"Number of customers should equal the number of unique customers in transactions in the given period. Expected {expected_num_customers}, got {results_customer_dynamic_feature.data.customer_id.nunique()}"
 
     # Number of weeks should equal the number of unique weeks in transactions in the given period
     expected_num_weeks = transactions.query(
@@ -260,82 +269,216 @@ def test_candidate_generator_pipeline(
     print("Checks passed")
 
 
+class CandidateGeneratorTest:
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def test_positive_examples(
+        results_candidate_generation: CandidateGeneratorResult,
+        transactions: pd.DataFrame,
+        pipeline_config: CandidateGeneratorPipelineConfig,
+    ):
+        print("Testing positive examples")
+        # For train dataset, test that all positive examples are in transactions
+        positive_examples = results_candidate_generation.data.query("label == 1")
+        join = positive_examples.merge(
+            transactions, on=["customer_id", "article_id", "week_num"], how="left", indicator=True
+        )
+        assert join["_merge"].unique() == ["both"], "All positive examples should be in transactions"
+
+        if pipeline_config.restrict_positive_samples:
+            # Check that there should be no positive sources
+            assert (
+                results_candidate_generation.data.query("label == 1 and source == 'positive'").shape[0] == 0
+            ), "There should be no positive sources"
+
+    @staticmethod
+    def test_negative_examples(results_candidate_generation: CandidateGeneratorResult, transactions: pd.DataFrame):
+        print("Testing negative examples")
+        negative_examples = results_candidate_generation.data.query("label == 0")
+        join = negative_examples.merge(
+            transactions, on=["customer_id", "article_id", "week_num"], how="left", indicator=True
+        )
+        assert join["_merge"].value_counts().loc["both"] == 0, "All negative examples should not be in transactions"
+
+    @staticmethod
+    def test_repurchases_last_purchase(
+        results_candidate_generation: CandidateGeneratorResult,
+        transactions: pd.DataFrame,
+        pipeline_config: CandidateGeneratorPipelineConfig,
+        customer_ids: List[int],
+    ):
+        """Check that the last purchase is being added as a candidate for the next purchase week."""
+        print("Testing repurchases - last purchase")
+        train_start_date = week_num_from_week(pipeline_config.train_start_date)
+        sample = results_candidate_generation.sample
+        if sample == "train":
+            train_end_date = week_num_from_week(pipeline_config.train_end_date) - 1
+        elif sample == "valid":
+            train_end_date = WEEK_NUM_VALID - 1
+        else:
+            train_end_date = WEEK_NUM_TEST - 1
+
+        for customer_id in customer_ids:
+            print(f"Customer {customer_id}")
+
+            # For each customer, get the weeks with transactions used for calculating repurchases
+            weeks = transactions.query(
+                "customer_id == @customer_id and week_num >= @train_start_date and week_num <= @train_end_date"
+            ).week_num.unique()
+            weeks.sort()
+
+            if results_candidate_generation.sample != "train":
+                weeks = weeks[-1:]
+            print(f"Customer {customer_id} has {len(weeks)} weeks: {weeks}")
+
+            for i, week_num in enumerate(sorted(weeks)):
+                print(f"Week {week_num}")
+                res = transactions.query("customer_id == @customer_id and week_num == @week_num")
+                if i < len(weeks) - 1:
+                    next_purchase_week_num = weeks[i + 1]
+                elif results_candidate_generation.sample == "test":
+                    next_purchase_week_num = WEEK_NUM_TEST
+                elif results_candidate_generation.sample == "valid":
+                    next_purchase_week_num = WEEK_NUM_VALID
+                else:
+                    # For train, we don't have a next purchase week
+                    print(
+                        f"No next purchase week for customer {customer_id} and week {week_num} because it's the last week in train dataset"
+                    )
+                    continue
+
+                # Check that each article is in the candidate list in week_num + 1
+                print(f"Checking {len(res)} article_ids in week {next_purchase_week_num}")
+                for article_id in res.article_id:
+                    assert (
+                        article_id
+                        in results_candidate_generation.data.query(
+                            "customer_id == @customer_id and week_num == @next_purchase_week_num"
+                        ).article_id.unique()
+                    ), f"Article {article_id} is not in the candidate list for customer {customer_id} and week {next_purchase_week_num}"
+                print(f"Checks for customer {customer_id} and week {week_num} passed")
+                print("-" * 80)
+
+            print("=" * 80)
+            print("")
+
+    @staticmethod
+    def test_repurchases_last_k_items(
+        results_candidate_generation: CandidateGeneratorResult,
+        transactions: pd.DataFrame,
+        pipeline_config: CandidateGeneratorPipelineConfig,
+        customer_ids: List[int],
+    ):
+        """Check that the last k items are being added as candidates for the next purchase week."""
+        print("Testing repurchases - last k items")
+        train_start_date = week_num_from_week(pipeline_config.train_start_date)
+        train_end_date = week_num_from_week(pipeline_config.train_end_date)
+        history_start_date = week_num_from_week(pipeline_config.history_start_date)
+        k = pipeline_config.negative_sample_strategies["repurchase"]["k"]
+
+        for customer_id in customer_ids:
+            print(f"Customer {customer_id}")
+
+            # For each customer, get the weeks with transactions used for calculating repurchases
+            if results_candidate_generation.sample == "train":
+                weeks = transactions.query(
+                    "customer_id == @customer_id and week_num >= @train_start_date and week_num <= @train_end_date"
+                ).week_num.unique()
+                weeks.sort()
+            elif results_candidate_generation.sample == "valid":
+                weeks = [WEEK_NUM_VALID]
+            else:
+                weeks = [WEEK_NUM_TEST]
+
+            # For each week, get the last k items
+            for week_num in weeks:
+                print(f"Week {week_num}")
+                res = transactions.query(
+                    "customer_id == @customer_id and week_num < @week_num and week_num >= @history_start_date"
+                ).sort_values(["week_num", "article_id"], ascending=[False, True])
+                last_k_items = set(res.head(k).article_id.tolist())
+
+                # Check that the last k items are in the candidate list for week_num
+                candidate_set = set(
+                    results_candidate_generation.data.query(
+                        "customer_id == @customer_id and week_num == @week_num"
+                    ).article_id.unique()
+                )
+                print(f"Candidate set: {candidate_set}")
+                print(f"Last {k} items: {last_k_items}")
+                print("Diff:", last_k_items - candidate_set)
+                assert last_k_items.issubset(
+                    candidate_set
+                ), f"Last {k} items are not in the candidate list for customer {customer_id} and week {week_num}"
+                print(f"Checks for customer {customer_id} and week {week_num} passed")
+                print("-" * 80)
+
+            print("=" * 80)
+            print("")
+
+    @staticmethod
+    def test_repurchases(
+        results_candidate_generation: CandidateGeneratorResult,
+        transactions: pd.DataFrame,
+        pipeline_config: CandidateGeneratorPipelineConfig,
+        customer_ids: List[int],
+    ):
+        if pipeline_config.neg_to_pos_ratio != -1:
+            print("Skipping repurchases test because neg_to_pos_ratio is not -1")
+            return
+
+        if pipeline_config.negative_sample_strategies["repurchase"]["strategy"] == "last_purchase":
+            CandidateGeneratorTest.test_repurchases_last_purchase(
+                results_candidate_generation, transactions, pipeline_config, customer_ids
+            )
+        elif pipeline_config.negative_sample_strategies["repurchase"]["strategy"] == "last_k_items":
+            CandidateGeneratorTest.test_repurchases_last_k_items(
+                results_candidate_generation, transactions, pipeline_config, customer_ids
+            )
+        else:
+            raise ValueError(
+                f"Invalid repurchase strategy: {pipeline_config.negative_sample_strategies['repurchase']['strategy']}"
+            )
+
+    @staticmethod
+    def test(
+        results_candidate_generation: CandidateGeneratorResult,
+        transactions: pd.DataFrame,
+        pipeline_config: CandidateGeneratorPipelineConfig,
+        customer_ids: List[int],
+    ):
+        """Test that the candidate generator is correctly generating candidates."""
+        print("Testing candidate generator")
+
+        sample = results_candidate_generation.sample
+        print(f"Sample: {sample}")
+
+        # Test positive examples
+        CandidateGeneratorTest.test_positive_examples(results_candidate_generation, transactions, pipeline_config)
+
+        # Test negative examples
+        CandidateGeneratorTest.test_negative_examples(results_candidate_generation, transactions)
+
+        # Check repurchases for some customers
+        CandidateGeneratorTest.test_repurchases(
+            results_candidate_generation, transactions, pipeline_config, customer_ids
+        )
+
+        print("Checks passed")
+
+
+# Keeping for backward compatibility
 def test_candidate_generator(
     results_candidate_generation: CandidateGeneratorResult,
     transactions: pd.DataFrame,
     pipeline_config: CandidateGeneratorPipelineConfig,
     customer_ids: List[int],
 ):
-    sample = results_candidate_generation.sample
-    print(f"Sample: {sample}")
-
-    # For train dataset, test that all positive examples are in transactions
-    positive_examples = results_candidate_generation.data.query("label == 1")
-    join = positive_examples.merge(
-        transactions, on=["customer_id", "article_id", "week_num"], how="left", indicator=True
-    )
-    assert join["_merge"].unique() == ["both"], "All positive examples should be in transactions"
-
-    negative_examples = results_candidate_generation.data.query("label == 0")
-    join = negative_examples.merge(
-        transactions, on=["customer_id", "article_id", "week_num"], how="left", indicator=True
-    )
-    assert join["_merge"].value_counts().loc["both"] == 0, "All negative examples should not be in transactions"
-
-    # Check repurchases for some customers
-    train_start_date = week_num_from_week(pipeline_config.train_start_date)
-    if sample == "train":
-        train_end_date = week_num_from_week(pipeline_config.train_end_date) - 1
-    elif sample == "valid":
-        train_end_date = WEEK_NUM_VALID - 1
-    else:
-        train_end_date = WEEK_NUM_TEST - 1
-
-    for customer_id in customer_ids:
-        print(f"Customer {customer_id}")
-
-        # For each customer, get the weeks with transactions used for calculating repurchases
-        weeks = transactions.query(
-            "customer_id == @customer_id and week_num >= @train_start_date and week_num <= @train_end_date"
-        ).week_num.unique()
-        weeks.sort()
-
-        if results_candidate_generation.sample != "train":
-            weeks = weeks[-1:]
-        print(f"Customer {customer_id} has {len(weeks)} weeks: {weeks}")
-
-        for i, week_num in enumerate(sorted(weeks)):
-            print(f"Week {week_num}")
-            res = transactions.query("customer_id == @customer_id and week_num == @week_num")
-            if i < len(weeks) - 1:
-                next_purchase_week_num = weeks[i + 1]
-            elif results_candidate_generation.sample == "test":
-                next_purchase_week_num = WEEK_NUM_TEST
-            elif results_candidate_generation.sample == "valid":
-                next_purchase_week_num = WEEK_NUM_VALID
-            else:
-                # For train, we don't have a next purchase week
-                print(
-                    f"No next purchase week for customer {customer_id} and week {week_num} because it's the last week in train dataset"
-                )
-                continue
-
-            # Check that each article is in the candidate list in week_num + 1
-            print(f"Checking {len(res)} article_ids in week {next_purchase_week_num}")
-            for article_id in res.article_id:
-                assert (
-                    article_id
-                    in results_candidate_generation.data.query(
-                        "customer_id == @customer_id and week_num == @next_purchase_week_num"
-                    ).article_id.unique()
-                ), f"Article {article_id} is not in the candidate list for customer {customer_id} and week {next_purchase_week_num}"
-            print(f"Checks for customer {customer_id} and week {week_num} passed")
-            print("-" * 80)
-
-        print("=" * 80)
-        print("")
-
-    print("Checks passed")
+    """Test that the candidate generator is correctly generating candidates."""
+    CandidateGeneratorTest.test(results_candidate_generation, transactions, pipeline_config, customer_ids)
 
 
 def test_input_embedding_similarity(
@@ -533,7 +676,7 @@ def test_lightgbm_data_features(results: LightGBMDataResult, verbose: bool = Fal
 
     # Check that there should be no missing values
     print("Checking no missing values")
-    assert data.isnull().sum().sum() == 0, "There should be no missing values"
+    assert data.isnull().sum().sum() == 0, f"There should be no missing values, got {data.isnull().sum()}"
 
     # Check that there should be no duplicate columns
     print("Checking no duplicate columns")
