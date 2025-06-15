@@ -1,38 +1,30 @@
 import json
 import logging
-import os
-import warnings
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import lightgbm as lgb
 import mlflow
-import numpy as np
 import optuna
 import pandas as pd
-from lightgbm import LGBMRanker
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from src.config import DEFAULT_RANKER_HYPERPARAMETERS_PIPELINE_CONFIG
-from src.experiment_tracking import (
-    log_config,
-    log_feature_importance,
-    log_model_params,
-    setup_mlflow,
-)
+from src.experiment_tracking import log_config, log_model_params, setup_mlflow
 from src.feature_extraction import load_optimized_raw_data
 from src.input_preprocessing import (
     LightGBMDataResult,
     get_path_to_lightgbm_data,
 )
 from src.metrics import get_mapping_from_labels, mean_average_precision_at_k
-from src.ranker import RankerConfig, prepare_features_for_ranker
-from src.utils.core_utils import logger
+from src.ranker import prepare_features_for_ranker
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_config_ranker_with_hyperparameter_tuning():
-    return DEFAULT_RANKER_HYPERPARAMETERS_CONFIG
+    return DEFAULT_RANKER_HYPERPARAMETERS_PIPELINE_CONFIG
 
 
 def evaluate_mapk_train(model, X, ids, labels):
@@ -93,12 +85,12 @@ class RankerWithHyperparameterTuning:
 
     def prepare_features(self, data: LightGBMDataResult) -> Tuple[pd.DataFrame, List[str]]:
         """Prepare features for training/ validation."""
-        logger.info(f"Preparing features for training/ validation")
+        logger.info("Preparing features for training/ validation")
 
         features = self.get_all_features()
         X, cols_features_categorical = prepare_features_for_ranker(data, features)
 
-        logger.info(f"Features by domain:")
+        logger.info("Features by domain:")
         for domain, features in self.feature_config.items():
             logger.info(f"{domain}: {len(features)} features")
             logger.info(f"{features}")
@@ -195,7 +187,7 @@ class RankerWithHyperparameterTuning:
         Args:
             train_data: Training data
         """
-        logger.info(f"Training ranker")
+        logger.info("Training ranker")
         if train_data.use_type != "train":
             raise ValueError("Train data is not in train mode")
         if valid_train_data is not None and valid_train_data.use_type != "train":
@@ -346,7 +338,7 @@ class RankerHyperparameterTuningPipeline:
             subsample=self.config.subsample,
             seed=self.config.seed,
         )
-        logger.info(f"Loaded validation mapping")
+        logger.info("Loaded validation mapping")
 
         return train_data, valid_train_data, valid_inference_data, valid_mapping
 

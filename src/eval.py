@@ -1,13 +1,10 @@
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import matplotlib.pyplot as plt
 import mlflow
-import numpy as np
 import pandas as pd
 
 from src.config import (
@@ -110,7 +107,7 @@ class RankerEvaluator:
 
     def plot_feature_importance(self, ranker: Ranker):
         """Plot the feature importance."""
-        logger.info(f"Plotting feature importance")
+        logger.info("Plotting feature importance")
         feature_importance = ranker.get_feature_importance()
         print(feature_importance)
         # plot feature importance
@@ -125,15 +122,15 @@ class RankerEvaluator:
         self, ranker: Ranker, test_inference_data: LightGBMDataResult, test_mapping: dict, transactions: pd.DataFrame
     ) -> float:
         """Evaluate the ranker model."""
-        logger.info(f"Evaluating ranker model on test data")
+        logger.info("Evaluating ranker model on test data")
 
         # Calculate MAP@K for model prediction
-        logger.info(f"Calculating MAP@K for model prediction")
+        logger.info("Calculating MAP@K for model prediction")
         preds_model = ranker.predict_ranks(test_inference_data)
         mapk_model = mean_average_precision_at_k(test_mapping, preds_model, self.k)
 
         # Calculate MAP@K for heuristic prediction
-        logger.info(f"Calculating MAP@K for heuristic prediction")
+        logger.info("Calculating MAP@K for heuristic prediction")
         heuristic_articles = self._calculate_heuristic_prediction(
             transactions, self.test_week_num, self.k, self.heuristic_strategy
         )
@@ -141,7 +138,7 @@ class RankerEvaluator:
         mapk_heuristic = mean_average_precision_at_k(test_mapping, preds_heuristic, self.k)
 
         # Calculate MAP@K for ideal prediction
-        logger.info(f"Calculating MAP@K for ideal prediction")
+        logger.info("Calculating MAP@K for ideal prediction")
         mapk_ideal = ideal_mean_average_precision_at_k(test_mapping, preds_model, self.k)
 
         # # Plot feature importance
@@ -176,7 +173,7 @@ class RankerEvaluatorPipeline:
 
     def _load_ranker(self, run_id: str):
         """Load the ranker model."""
-        logger.info(f"Loading ranker model")
+        logger.info("Loading ranker model")
         setup_mlflow(self.experiment_name)
         model_uri = f"runs:/{run_id}/model"
         self.ranker = mlflow.lightgbm.load_model(model_uri)
@@ -206,7 +203,7 @@ class RankerEvaluatorPipeline:
 
     def _load_transactions(self):
         """Load the transactions data."""
-        logger.info(f"Loading transactions data")
+        logger.info("Loading transactions data")
         transactions_train = load_optimized_raw_data(
             data_type="transactions", sample="train", subsample=self.config.subsample, seed=self.config.seed
         )
@@ -223,7 +220,7 @@ class RankerEvaluatorPipeline:
 
     def setup(self):
         """Setup the pipeline."""
-        logger.info(f"Setting up ranker evaluator pipeline")
+        logger.info("Setting up ranker evaluator pipeline")
         logger.debug(f"Config: {json.dumps(self.config.to_dict(), indent=2)}")
 
         # Set up evaluator
@@ -231,11 +228,11 @@ class RankerEvaluatorPipeline:
             tmp_config = self.config.config_evaluator.copy()
             tmp_config["test_sample"] = sample
             self.evaluator[sample] = RankerEvaluator(tmp_config)
-        logger.info(f"Evaluator setup complete")
+        logger.info("Evaluator setup complete")
 
     def run(self) -> float:
         """Run the pipeline to evaluate the ranker model."""
-        logger.info(f"Running ranker evaluator pipeline")
+        logger.info("Running ranker evaluator pipeline")
 
         # Load ranker model
         self._load_ranker(self.run_id)
@@ -252,7 +249,7 @@ class RankerEvaluatorPipeline:
             )
 
         # Plot feature importance
-        logger.info(f"Plotting feature importance")
+        logger.info("Plotting feature importance")
         fig, ax = self.evaluator[self.sample[0]].plot_feature_importance(self.ranker)
         ax.set_title(f"Feature Importance for {self.run_id}")
         plt.show()

@@ -67,9 +67,9 @@ def test_feature_article_dynamic_feature(
     pipeline_config: ArticleDynamicFeaturePipelineConfig,
     article_ids: List[int],
 ):
-    start_week_num = pipeline_config.config_processor["start_week_num"]
-    end_week_num = pipeline_config.config_processor["end_week_num"]
-    history_start_week_num = pipeline_config.config_processor["history_start_week_num"]
+    start_week_num = pipeline_config.config_processor["start_week_num"]  # noqa: F841
+    end_week_num = pipeline_config.config_processor["end_week_num"]  # noqa: F841
+    history_start_week_num = pipeline_config.config_processor["history_start_week_num"]  # noqa: F841
 
     for article_id in article_ids:
 
@@ -158,7 +158,7 @@ def test_feature_customer_avg_embedding(
     customer_id: int,
 ):
 
-    history_start_week_num = pipeline_config.config_processor["history_start_week_num"]
+    history_start_week_num = pipeline_config.config_processor["history_start_week_num"]  # noqa: F841
     weeks = results_customer_dynamic_feature.data.query("customer_id == @customer_id").week_num.unique()
     print(f"Customer {customer_id} has {len(weeks)} weeks: {weeks}")
 
@@ -312,14 +312,14 @@ class CandidateGeneratorTest:
     ):
         """Check that the last purchase is being added as a candidate for the next purchase week."""
         print("Testing repurchases - last purchase")
-        train_start_date = week_num_from_week(pipeline_config.train_start_date)
-        sample = results_candidate_generation.sample
+        train_start_date = week_num_from_week(pipeline_config.train_start_date)  # noqa: F841
+        sample = results_candidate_generation.sample  # noqa: F841
         if sample == "train":
-            train_end_date = week_num_from_week(pipeline_config.train_end_date) - 1
+            train_end_date = week_num_from_week(pipeline_config.train_end_date) - 1  # noqa: F841
         elif sample == "valid":
-            train_end_date = WEEK_NUM_VALID - 1
+            train_end_date = WEEK_NUM_VALID - 1  # noqa: F841
         else:
-            train_end_date = WEEK_NUM_TEST - 1
+            train_end_date = WEEK_NUM_TEST - 1  # noqa: F841
 
         for customer_id in customer_ids:
             print(f"Customer {customer_id}")
@@ -374,9 +374,9 @@ class CandidateGeneratorTest:
     ):
         """Check that the last k items are being added as candidates for the next purchase week."""
         print("Testing repurchases - last k items")
-        train_start_date = week_num_from_week(pipeline_config.train_start_date)
-        train_end_date = week_num_from_week(pipeline_config.train_end_date)
-        history_start_date = week_num_from_week(pipeline_config.history_start_date)
+        train_start_date = week_num_from_week(pipeline_config.train_start_date)  # noqa: F841
+        train_end_date = week_num_from_week(pipeline_config.train_end_date) - 1  # noqa: F841
+        history_start_date = week_num_from_week(pipeline_config.history_start_date)  # noqa: F841
         k = pipeline_config.negative_sample_strategies["repurchase"]["k"]
 
         for customer_id in customer_ids:

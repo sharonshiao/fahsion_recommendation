@@ -1,11 +1,8 @@
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-
-logger = logging.getLogger(__name__)
-
 
 from src.sampling.popularity import PopularityBasedSampler
 from src.sampling.repurchase import RepurchaseSampleGenerator
@@ -13,6 +10,8 @@ from src.sampling.utils import (
     calculate_article_weekly_stats,
     calculate_weekly_popular_items,
 )
+
+logger = logging.getLogger(__name__)
 
 WEEK_NUM_VALID = 103
 WEEK_NUM_TEST = 104

@@ -7,7 +7,7 @@ SHELL = /bin/bash
 style:
 	black .
 	flake8
-	python3 -m isort .
+	isort .
 
 # Cleaning
 .PHONY: clean

@@ -1,12 +1,8 @@
 import logging
 import os
 import random
-import sys
 
 import numpy as np
-import tqdm
-
-# import torch  # This would crash if called with LightGBM
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +32,7 @@ def setup_logging(level=logging.DEBUG, log_file="tmp.log", remove_existing=False
     console_handler.setFormatter(formatter)
 
     # Add console handler to the logger
-    logger.debug(f"Adding console handler to the logger")
+    logger.debug("Adding console handler to the logger")
     root_logger.addHandler(console_handler)
 
     # Add FileHandler

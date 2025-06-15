@@ -3,7 +3,7 @@ import logging
 import os
 import pickle
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -156,7 +156,6 @@ class LightGBMDataResult:
         data = pd.read_parquet(f"{path_to_dir}/data.parquet")
 
         # Read metadata to check if label and group exist
-        metadata_path = f"{path_to_dir}/metadata.json"
         with open(f"{path_to_dir}/metadata.json", "r") as f:
             metadata = json.load(f)
         logger.info(f"Metadata loaded: {metadata}")

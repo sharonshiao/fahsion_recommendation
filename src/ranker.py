@@ -34,17 +34,14 @@ from src.metrics import (
     mean_average_precision_at_k,
     mean_average_precision_at_k_hierarchical,
 )
-from src.utils.core_utils import (
-    convert_dict_values_to_float,
-    decode_lightgbm_params,
-)
+from src.utils.core_utils import decode_lightgbm_params
 
 logger = logging.getLogger(__name__)
 
 
 def prepare_features_for_ranker(data: LightGBMDataResult, features: List[str]) -> Tuple[pd.DataFrame, List[str]]:
     """Prepare features for training/ validation."""
-    logger.info(f"Preparing features for training/ validation")
+    logger.info("Preparing features for training/ validation")
 
     # Only include features that are also in df
     cols_features_available = data.get_feature_names_list()
@@ -135,7 +132,7 @@ class RankerConfig:
         """Save config to directory."""
         logger.info(f"Saving config to {path_to_dir}")
         os.makedirs(path_to_dir, exist_ok=True)
-        with open(path_to_dir + f"/config.json", "w") as f:
+        with open(path_to_dir + "/config.json", "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         logger.info(f"Config saved to {path_to_dir}")
 
@@ -143,7 +140,7 @@ class RankerConfig:
     def load(cls, path_to_dir: str) -> "RankerConfig":
         """Load config from directory."""
         logger.info(f"Loading config from {path_to_dir}")
-        with open(path_to_dir + f"/config.json", "r") as f:
+        with open(path_to_dir + "/config.json", "r") as f:
             config = cls.from_dict(json.load(f))
             logger.info(f"Config loaded from {path_to_dir}")
             return config
@@ -202,12 +199,12 @@ class Ranker:
 
     def prepare_features(self, data: LightGBMDataResult) -> Tuple[pd.DataFrame, List[str]]:
         """Prepare features for training/ validation."""
-        logger.info(f"Preparing features for training/ validation")
+        logger.info("Preparing features for training/ validation")
 
         features = self.get_all_features()
         X, cols_features_categorical = prepare_features_for_ranker(data, features)
 
-        logger.info(f"Features by domain:")
+        logger.info("Features by domain:")
         for domain, features in self.feature_config.items():
             logger.info(f"{domain}: {len(features)} features")
             logger.info(f"{features}")
@@ -220,7 +217,7 @@ class Ranker:
         Args:
             train_data: Training data
         """
-        logger.info(f"Training ranker")
+        logger.info("Training ranker")
         if train_data.use_type != "train":
             raise ValueError("Train data is not in train mode")
         if valid_data is not None and valid_data.use_type != "train":
@@ -232,14 +229,13 @@ class Ranker:
         train_groups = train_data.group
 
         # Initialize model
-        logger.info(f"Initializing model")
+        logger.info("Initializing model")
         self.model = LGBMRanker(
             **self.lightgbm_params["ranker_params"],
         )
         logger.debug(f"Lightgbm params: {self.model.get_params()}")
 
-        logger.info(f"Training model")
-        metrics = {}
+        logger.info("Training model")
         if not self.lightgbm_params["use_validation_set"]:
             # Train model
             self.model.fit(
@@ -272,11 +268,11 @@ class Ranker:
         # Infer signature
         self.signature = infer_signature(X_train, self.model.predict(X_train))
 
-        logger.info(f"Model trained")
+        logger.info("Model trained")
 
     def predict_scores(self, data: LightGBMDataResult) -> np.ndarray:
         """Predict scores"""
-        logger.info(f"Predicting scores")
+        logger.info("Predicting scores")
         if data.use_type != "inference":
             warnings.warn("Data is not in inference mode")
 
@@ -284,12 +280,12 @@ class Ranker:
             raise ValueError("Model not trained yet")
 
         X_test, _ = self.prepare_features(data)
-        logger.info(f"Completed prediction")
+        logger.info("Completed prediction")
         return self.model.predict(X_test)
 
     def predict_ranks(self, data: LightGBMDataResult) -> dict[str, List[int]]:
         """Predict ranks for each group. Assume there is only one group per customer."""
-        logger.info(f"Predicting ranks")
+        logger.info("Predicting ranks")
         if data.use_type != "inference":
             warnings.warn("Data is not in inference mode")
 
@@ -305,7 +301,7 @@ class Ranker:
 
         # Sort by customer_id and score (descending) to get ranks
         results = results.sort_values(["customer_id", "score"], ascending=[True, False])
-        logger.info(f"Completed prediction")
+        logger.info("Completed prediction")
         return results.groupby("customer_id")["article_id"].apply(list).to_dict()
 
     def get_feature_importance(self) -> pd.DataFrame:
@@ -437,7 +433,7 @@ class RankerTrainValidPipeline:
         self.ranker.model.booster_.save_model(path_model)
         mlflow.log_artifact(path_model)
         logger.info(f"Model saved to {path_model}")
-        logger.info(f"Ranker saved via mlflow")
+        logger.info("Ranker saved via mlflow")
 
     def _evaluate_model_on_train_data(self, data: LightGBMDataResult):
         scores = self.ranker.predict_scores(data)
@@ -461,7 +457,7 @@ class RankerTrainValidPipeline:
 
     def _evaluate_model_on_inference_data(self, valid_inference_data: LightGBMDataResult) -> dict:
         # This assumes we only have one week in the inference data
-        logger.info(f"Evaluating model on inference data")
+        logger.info("Evaluating model on inference data")
         # Load inference data
         if self.config.sample == "train":
             sample_inference = "valid"

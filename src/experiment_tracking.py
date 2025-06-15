@@ -7,8 +7,6 @@ from typing import Any, Dict, List
 import mlflow
 import numpy as np
 
-from src.metrics import mean_average_precision_at_k
-
 logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY = "../model/mlruns"

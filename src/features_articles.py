@@ -41,7 +41,7 @@ def get_path_to_article_features(feature_type: str, subsample: float, seed: int)
 
     if feature_type == "embedding":
         # Only use full data for embedding
-        return f"../data/preprocessed/articles_embedding/full"
+        return "../data/preprocessed/articles_embedding/full"
 
     if subsample < 1:
         return f"../data/preprocessed/articles_{feature_type}/subsample_{subsample}_{seed}"
@@ -269,7 +269,7 @@ class ArticleStaticFeaturePipeline:
         return self
 
     def _load_raw_data(self):
-        logger.info(f"Loading raw article data for ArticleFeaturePipeline")
+        logger.info("Loading raw article data for ArticleFeaturePipeline")
 
         articles = load_optimized_raw_data("articles", subsample=self.config.subsample, seed=self.config.seed)
         logger.debug(f"Loaded raw article data with shape: {articles.shape}")
@@ -576,7 +576,7 @@ class ArticleDynamicFeatureProcessor:
         base[cols_features] = base.groupby("article_id")[cols_features].ffill()
 
         # Fill in remaining missing values with median age or 0
-        logger.debug(f"Filling in remaining missing values with median age or 0")
+        logger.debug("Filling in remaining missing values with median age or 0")
         fillna_dict = {
             "cumulative_mean_age": customer_median_age,
             "cumulative_sales_count": 0,

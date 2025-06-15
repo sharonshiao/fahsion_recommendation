@@ -20,8 +20,9 @@ skip = ["venv" , "data", ".gitignore", "scratch"]
 
 [tool.flake8]
 exclude = ["venv", "data", "scratch"]
-ignore = ["E501"]
+ignore = ["E501", "W503"]
 # E501: Line too long
+# W503: Line break before binary operator
 
 
 [tool.pytest.ini_options]

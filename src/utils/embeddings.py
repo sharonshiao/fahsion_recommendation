@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd

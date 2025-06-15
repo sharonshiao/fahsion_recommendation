@@ -13,7 +13,7 @@ def get_mapping_from_labels(raw_data: pd.DataFrame, col_score: str, is_label: bo
     if "article_id" not in raw_data.columns:
         raise ValueError("article_id column not found in data")
     if col_score not in raw_data.columns:
-        raise ValueError(f"label column not found in data")
+        raise ValueError("label column not found in data")
 
     # Sort by score
     if is_label:
@@ -80,7 +80,7 @@ def average_precision_at_k(actual, predicted, k=12):
 
 def mean_average_precision_at_k(map_true: dict, map_pred: dict, k: int = 12) -> float:
     """Calculate mean average precision at k."""
-    logger.info(f"Evaluating ranking")
+    logger.info("Evaluating ranking")
     apks = []
     for c_id, gt in map_true.items():
         pred = map_pred.get(c_id, [])
@@ -91,7 +91,7 @@ def mean_average_precision_at_k(map_true: dict, map_pred: dict, k: int = 12) -> 
 
 def mean_average_precision_at_k_hierarchical(map_true: dict, map_pred: dict, k: int = 12) -> float:
     """Calculate mean average precision at k for hierarchical mapping."""
-    logger.info(f"Evaluating ranking")
+    logger.info("Evaluating ranking")
     apks = []
     sum_obs = 0
     for week in map_true.keys():
@@ -113,7 +113,7 @@ def ideal_average_precision_at_k(actual, predicted, k=12):
 
 def ideal_mean_average_precision_at_k(map_true: dict, map_pred: dict, k: int = 12) -> float:
     """Calculate ideal mean average precision at k."""
-    logger.info(f"Evaluating ranking")
+    logger.info("Evaluating ranking")
     apks = []
     for c_id, gt in map_true.items():
         pred = map_pred.get(c_id, [])

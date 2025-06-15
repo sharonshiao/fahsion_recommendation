@@ -3,7 +3,7 @@ import logging
 import os
 import pickle
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -73,12 +73,12 @@ class CustomerStaticFeaturePipelineConfig:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "CustomerFeaturePipelineConfig":
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "CustomerStaticFeaturePipelineConfig":
         """Create config from dictionary."""
         return cls(**config_dict)
 
     @classmethod
-    def create_default(cls) -> "CustomerFeaturePipelineConfig":
+    def create_default(cls) -> "CustomerStaticFeaturePipelineConfig":
         """Create default configuration."""
         return cls.from_dict(DEFAULT_CUSTOMER_STATIC_FEATURES_CONFIG)
 
@@ -288,7 +288,7 @@ class CustomerStaticFeaturePipeline:
         return self
 
     def _load_raw_data(self):
-        logger.info(f"Loading raw customer data for CustomerFeaturePipeline")
+        logger.info("Loading raw customer data for CustomerFeaturePipeline")
 
         customers = load_optimized_raw_data("customers", subsample=self.config.subsample, seed=self.config.seed)
         logger.debug(f"Loaded raw customer data with shape: {customers.shape}")
