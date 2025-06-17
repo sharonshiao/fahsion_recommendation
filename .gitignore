@@ -172,3 +172,31 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+## ================================================================================
+# User defined
+## ================================================================================
+# Data
+data/
+evaluation/
+mlruns/
+model/
+.vscode/
+scratch/
+app/model
+
+# venv
+venv/
+
+
+# IPython
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# File types
+*.png
+*.parquet
+*.npy
+*.log
