@@ -1,3 +1,17 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fashion-recommendation"
+version = "0.1.0"
+description = "Fashion recommendation system"
+requires-python = ">=3.8"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = ["app", "src"]
+
 # Basic settings adopted from https://github.com/GokuMohandas/Made-With-ML
 # Black formatting
 [tool.black]
@@ -23,7 +37,6 @@ exclude = ["venv", "data", "scratch"]
 ignore = ["E501", "W503"]
 # E501: Line too long
 # W503: Line break before binary operator
-
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

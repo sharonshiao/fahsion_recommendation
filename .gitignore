@@ -184,10 +184,11 @@ mlruns/
 model/
 .vscode/
 scratch/
-
+app/model
 
 # venv
 venv/
+
 
 # IPython
 .ipynb_checkpoints
