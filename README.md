@@ -7,7 +7,7 @@ An end-to-end machine learning system that delivers personalized fashion recomme
 This system addresses the classic recommendation problem in e-commerce: helping users discover fashion items they're likely to purchase. The solution employs a two-stage architecture:
 
 - **Retrieval Stage**: Combines user purchase history with trending items to create candidate sets
-- **Ranking Stage**: Uses a LightGBM LambdaRank model to score and rank candidates based on rich feature representations
+- **Ranking Stage**: Uses a LightGBM LambdaMART model to score and rank candidates based on rich feature representations
 
 The model achieves **~30% improvement in MAP@k** over heuristic baselines, demonstrating the value of learning-to-rank approaches in recommendation systems.
 
@@ -15,7 +15,7 @@ The model achieves **~30% improvement in MAP@k** over heuristic baselines, demon
 
 
 ### Core ML Components
-- **Learning-to-Rank**: LightGBM LambdaRank model for personalized ranking
+- **Learning-to-Rank**: LightGBM LambdaMART model for personalized ranking
 - **Feature Engineering**: Comprehensive user, item, and interaction features
 - **Embeddings**: DistilBERT for text embeddings, ResNet for image embeddings
 - **Hyperparameter Optimization**: Optuna for automated hyperparameter tuning
